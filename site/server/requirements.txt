@@ -9,7 +9,7 @@
 # chosen, and Dependabot said so within a day. Two files naming the same
 # package should agree, and the newer set is the one already proven on this
 # box.
-fastapi==0.141.1
+fastapi==0.143.0
 psycopg[binary,pool]==3.3.6
 python-multipart==0.0.32
 uvicorn==0.54.0
