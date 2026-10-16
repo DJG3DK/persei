@@ -1404,7 +1404,14 @@ export async function testGitHubToken(arg: { name?: string; token?: string }): P
   return res.json();
 }
 
-export type GitHubItemState = "seen" | "proposed" | "task_created" | "dismissed" | "snoozed" | "resolved";
+export type GitHubItemState = "seen" | "proposed" | "task_created" | "awaiting_rescan" | "dismissed" | "snoozed" | "resolved";
+
+/** An earlier task that merged a fix GitHub did not accept. */
+export interface GitHubItemAttempt {
+  task_id: string;
+  finished_at: number;
+  still_open: number[];
+}
 
 export interface GitHubInboxItem {
   key: string;
@@ -1422,6 +1429,7 @@ export interface GitHubInboxItem {
   created_at: number;
   updated_at: number;
   snoozed_until: number | null;
+  attempts?: GitHubItemAttempt[];
 }
 
 interface GitHubInboxResponse {

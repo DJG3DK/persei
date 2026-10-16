@@ -688,6 +688,16 @@ async def _github_live_tasks(repo: str) -> set[str]:
     return live
 
 
+async def _github_finished_tasks(repo: str) -> dict[str, float]:
+    """This project's finished tasks and when they finished: the store's own
+    last write, which is the one that set the task done."""
+    out = {}
+    for it in await _tasks_in(repo, ("done",)):
+        stamp = it.updated_at.timestamp() if hasattr(it.updated_at, "timestamp") else float(it.updated_at or 0)
+        out[it.value.get("task_id") or it.key] = stamp
+    return out
+
+
 async def _github_create_task(repo: str, goal: str, budget: float, route: str) -> str:
     """A task GitHub asked for, not a person.
 
@@ -756,7 +766,7 @@ async def _github_poll_once() -> list[dict]:
     results = await github_inbox.poll_all(
         app.state.store, config,
         create_task=_github_create_task, notify=_github_notify, open_auto_count=_github_open_auto_count,
-        live_tasks=_github_live_tasks,
+        live_tasks=_github_live_tasks, finished_tasks=_github_finished_tasks,
     )
     _github_last_poll = {"at": time.time(), "results": results}
     app.state.github_last_poll = _github_last_poll

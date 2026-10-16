@@ -25,12 +25,13 @@ const STATE_LABEL: Record<GitHubItemState, string> = {
   seen: "seen (source off)",
   proposed: "waiting for you",
   task_created: "task started",
+  awaiting_rescan: "fix merged, waiting for GitHub to re-scan",
   dismissed: "dismissed",
   snoozed: "snoozed",
   resolved: "resolved on GitHub",
 };
 
-const ACTIVE: GitHubItemState[] = ["proposed", "task_created", "snoozed", "seen"];
+const ACTIVE: GitHubItemState[] = ["proposed", "task_created", "awaiting_rescan", "snoozed", "seen"];
 
 function ago(ts: number): string {
   const s = Math.max(0, Date.now() / 1000 - ts);
@@ -80,7 +81,7 @@ export function GitHubInboxView({ isAdmin, onOpenTask }: { isAdmin: boolean; onO
   const shown = useMemo(() => {
     const scoped = repoFilter ? items.filter((i) => i.repo === repoFilter) : items;
     const list = showAll ? scoped : scoped.filter((i) => ACTIVE.includes(i.state));
-    const rank: Record<GitHubItemState, number> = { proposed: 0, task_created: 1, snoozed: 2, seen: 3, dismissed: 4, resolved: 5 };
+    const rank: Record<GitHubItemState, number> = { proposed: 0, task_created: 1, awaiting_rescan: 2, snoozed: 3, seen: 4, dismissed: 5, resolved: 6 };
     return [...list].sort((a, b) => rank[a.state] - rank[b.state] || b.updated_at - a.updated_at);
   }, [items, showAll, repoFilter]);
 
@@ -172,6 +173,20 @@ export function GitHubInboxView({ isAdmin, onOpenTask }: { isAdmin: boolean; onO
               </a>
               {item.summary && <div className="ghi-summary ghi-summary--multiline">{item.summary}</div>}
               {item.reason && <div className="ghi-reason">{item.reason}</div>}
+              {(item.attempts ?? []).length > 0 && (
+                <ul className="ghi-attempts">
+                  {item.attempts!.map((a) => (
+                    <li key={a.task_id}>
+                      Previous attempt:{" "}
+                      {onOpenTask
+                        ? <button type="button" className="ghi-attempt-link" onClick={() => onOpenTask(a.task_id, item.repo)}>task {a.task_id.slice(0, 8)}</button>
+                        : <>task {a.task_id.slice(0, 8)}</>}
+                      {" "}merged {new Date(a.finished_at * 1000).toLocaleDateString()}, GitHub still reported{" "}
+                      {a.still_open.length ? a.still_open.map((n) => `#${n}`).join(", ") : "it"}
+                    </li>
+                  ))}
+                </ul>
+              )}
               <div className="ghi-actions">
                 {item.task_id && (
                   onOpenTask
@@ -181,7 +196,7 @@ export function GitHubInboxView({ isAdmin, onOpenTask }: { isAdmin: boolean; onO
                 {actionable && (
                   <>
                     <button type="button" className="gh-btn gh-btn--go" disabled={isBusy} onClick={() => act(item, "approve")}>
-                      {isBusy ? "Working…" : "Approve & start task"}
+                      {isBusy ? "Working…" : (item.attempts ?? []).length ? "Start another task" : "Approve & start task"}
                     </button>
                     <button type="button" className="gh-btn" disabled={isBusy} onClick={() => act(item, "snooze", 1)}>Snooze 1 d</button>
                     <button type="button" className="gh-btn" disabled={isBusy} onClick={() => act(item, "snooze", 7)}>7 d</button>

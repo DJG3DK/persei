@@ -42,6 +42,7 @@ import re
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from typing import Any
 from collections.abc import Awaitable, Callable
 
@@ -100,6 +101,20 @@ class GitHubClient:
     async def dependabot_alerts(self, slug: str) -> list[dict]:
         return await self.get(f"/repos/{slug}/dependabot/alerts", {"state": "open", "per_page": 50})
 
+    async def last_scan_at(self, slug: str) -> float | None:
+        """When code scanning last analysed the default branch, or None. A
+        finished task's item waits for an analysis newer than the task."""
+        info = await self.repo(slug)
+        ref = f"refs/heads/{info.get('default_branch') or 'main'}"
+        rows = await self.get(f"/repos/{slug}/code-scanning/analyses", {"ref": ref, "per_page": 1})
+        if not rows:
+            return None
+        stamp = rows[0].get("created_at") or ""
+        try:
+            return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+
     async def code_scanning_alerts(self, slug: str) -> list[dict]:
         """Open code scanning (CodeQL etc.) alerts. A first full analysis can
         produce a few hundred; three pages is the ceiling before the inbox
@@ -147,6 +162,10 @@ class Item:
     updated_at: float = field(default_factory=time.time)
     snoozed_until: float | None = None
     approval_nonce: str | None = None
+    # Earlier tasks on this item that finished and merged without GitHub
+    # dropping it: [{"task_id", "finished_at", "still_open"}]. Shown on the
+    # item and written into the next task's goal.
+    attempts: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -447,9 +466,34 @@ class Decision:
     reason: str = ""
 
 
+# How long a finished task's item waits for GitHub to catch up, for the
+# kinds that have no scan to wait for (Dependabot re-evaluates on push, a
+# check reruns, a pull request closes). Code scanning waits for an actual
+# analysis of the default branch newer than the task instead.
+SETTLE_S = 45 * 60
+# An analysis must start at least this long after the task finished to count:
+# one already running for the commit before the fix can finish just after.
+SCAN_MARGIN_S = 60
+
+
+def settled(kind: str, finished_at: float, now: float, scanned_at: float | None) -> bool:
+    """Has GitHub had its chance to see a finished task's fix?"""
+    if kind == "code_scanning":
+        return scanned_at is not None and scanned_at >= finished_at + SCAN_MARGIN_S
+    return now - finished_at >= SETTLE_S
+
+
+def still_open_text(item: Item | dict) -> str:
+    """'1 of 1 alerts', '4 of 4 alerts', or 'it' for an item with no numbers."""
+    d = item.to_dict() if isinstance(item, Item) else item
+    n = len(alert_numbers(d))
+    return f"{n} alert{'s' if n != 1 else ''}" if n else "it"
+
+
 def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: int,
            now: float | None = None, has_checks: bool | None = True,
-           live_tasks: set | None = None) -> tuple[list[Decision], list[str]]:
+           live_tasks: set | None = None, finished_tasks: dict | None = None,
+           scanned_at: float | None = None) -> tuple[list[Decision], list[str]]:
     """Compare what was found with what the store holds.
 
     Returns the decisions for items that are new or changed, and the keys of
@@ -464,8 +508,38 @@ def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: 
     GitHub alert and a diff waiting for the operator's merge click. Without
     confirmed checks, Auto degrades to Propose, with the reason on the item.
     The operator loses one click and keeps the review that click is for.
+
+    `finished_tasks` maps this project's done tasks to when they finished.
+    A done task's item is not handled forever (2026-10-16: five code-scanning
+    items sat on finished tasks all day, every alert still open after the
+    fixes merged and GitHub re-scanned, with no button but "Open task"). It
+    waits, as `awaiting_rescan`, until GitHub has had its chance to see the
+    fix (settled()); then it either disappears from GitHub, or comes back as
+    a proposal that records the attempt -- never auto-started, so a fix
+    GitHub keeps rejecting cannot start task after task by itself.
     """
     now = now or time.time()
+    finished = finished_tasks or {}
+
+    def _after_finished_task(item: Item, prev: dict) -> Decision | None:
+        """The decision for an item whose task is done, or None if it is not."""
+        tid = prev.get("task_id")
+        if not tid or tid not in finished or prev.get("state") not in ("task_created", "awaiting_rescan"):
+            return None
+        item.created_at = prev.get("created_at", now)
+        item.task_id = tid
+        if not settled(item.kind, finished[tid], now, scanned_at):
+            item.state = "awaiting_rescan"
+            if prev.get("state") == "awaiting_rescan" and prev.get("fingerprint") == item.fingerprint:
+                return Decision(item, "skip", "")
+            return Decision(item, "none", "fix merged; waiting for GitHub to re-scan")
+        item.attempts.append({"task_id": tid, "finished_at": finished[tid],
+                              "still_open": alert_numbers(item.to_dict())})
+        item.task_id = None
+        item.state = "proposed"
+        return Decision(item, "propose",
+                        f"task {tid[:8]} merged its fix, but GitHub still reports {still_open_text(item)} "
+                        "after re-scanning")
     # None means "we could not ask", which must behave exactly as before:
     # never re-propose on a guess. An empty SET, by contrast, is a real
     # answer -- nothing is in flight.
@@ -497,6 +571,13 @@ def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: 
         prev = existing.get(item.key)
         mode = proj["policies"].get(item.kind, "off")
         item.mode = mode
+        if prev:
+            item.attempts = list(prev.get("attempts") or [])
+            after = _after_finished_task(item, prev) if mode != "off" else None
+            if after is not None:
+                if after.action != "skip":
+                    decisions.append(after)
+                continue
         if prev and prev.get("fingerprint") == item.fingerprint:
             # Unchanged. A snooze that expired is re-proposed, an item whose
             # task is no longer running comes back to the queue, and anything
@@ -535,7 +616,12 @@ def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: 
             item.state = "proposed"
             decisions.append(Decision(item, "propose", "policy: propose"))
         else:  # auto
-            if not auto_allowed:
+            if item.attempts:
+                # A fix already merged and GitHub kept the item: the next
+                # attempt is the operator's call, not the policy's.
+                item.state = "proposed"
+                decisions.append(Decision(item, "propose", "an earlier fix did not clear it; waiting for you"))
+            elif not auto_allowed:
                 item.state = "proposed"
                 decisions.append(Decision(item, "propose", _NO_CHECKS_REASON if has_checks is False else _UNCONFIRMED_CHECKS_REASON))
             elif budget > 0:
@@ -748,6 +834,23 @@ def alert_reference(item: dict) -> str:
     return "alerts " + ", ".join(f"#{n}" for n in nums[:-1]) + f" and #{nums[-1]}"
 
 
+def attempts_text(d: dict) -> str:
+    """What earlier tasks did and what GitHub still says, for the next task."""
+    lines = ["--- earlier attempts that GitHub did not accept ---"]
+    for a in d.get("attempts") or []:
+        when = datetime.fromtimestamp(a.get("finished_at") or 0).strftime("%Y-%m-%d %H:%M")
+        still = ", ".join(f"#{n}" for n in a.get("still_open") or []) or "the item"
+        lines.append(f"- Task {str(a.get('task_id', ''))[:8]} finished and merged its fix on {when}, "
+                     f"but after re-scanning GitHub still reports {still}.")
+    lines.append(
+        "Before changing anything, read what those commits changed (git log -p on the files above) and "
+        "work out why GitHub still flags the code: a scanner usually wants the input checked in a form it "
+        "recognises (a type check, an allow-list, a bounds check right where the value is used), not a "
+        "wrapper it cannot see through. Fix the lines listed above as GitHub reports them now, and make "
+        "sure the change does not introduce a new finding in the code it touches.")
+    return "\n".join(lines)
+
+
 def build_goal(item: Item | dict, pr_text: str | None = None, repo_root: str | None = None) -> str:
     d = item.to_dict() if isinstance(item, Item) else dict(item)
     goal = _GOAL_TEMPLATES[d["kind"]].format(
@@ -761,6 +864,8 @@ def build_goal(item: Item | dict, pr_text: str | None = None, repo_root: str | N
         if snippets:
             goal += ("\n\n--- the flagged code, read from this repository ---\n"
                      "(line numbers as of now; the alert's own line may have moved)\n\n" + snippets)
+    if d.get("attempts"):
+        goal += "\n\n" + attempts_text(d)
     if pr_text:
         goal += "\n\n--- pull request as read from GitHub ---\n" + pr_text[:20_000]
     goal += "\n\n(Created from the GitHub inbox. This task goes through the normal review gate and merge approval.)"
@@ -824,6 +929,7 @@ CreateTask = Callable[[str, str, float, str], Awaitable[str]]        # (repo, go
 Notify = Callable[[str, str], Awaitable[None]]                        # (text, repo)
 OpenAutoCount = Callable[[str], Awaitable[int]]                       # repo -> open auto tasks
 LiveTasks = Callable[[str], Awaitable[set]]                           # repo -> task ids still in flight
+FinishedTasks = Callable[[str], Awaitable[dict]]                      # repo -> {done task id: finished at}
 
 
 # One lock per item, held by everything that reads an item, acts on it and
@@ -882,6 +988,7 @@ async def poll_project(
     store, config: Config, settings: dict, repo: str, *,
     create_task: CreateTask, notify: Notify, open_auto_count: OpenAutoCount,
     client: GitHubClient | None = None, live_tasks: LiveTasks | None = None,
+    finished_tasks: FinishedTasks | None = None,
 ) -> dict:
     """One project, one pass. Returns a small summary for the dashboard/log."""
     proj = github_settings.project_settings(settings, repo)
@@ -901,8 +1008,18 @@ async def poll_project(
     # None when the caller did not supply a lookup: decide() then keeps every
     # task_created item exactly as it was, which is what it did before this.
     in_flight = await live_tasks(repo) if live_tasks else None
+    done = await finished_tasks(repo) if finished_tasks else {}
+    # When code scanning last looked at the default branch: asked only when a
+    # code-scanning item is waiting on a finished task, one call per poll.
+    scanned_at = None
+    if any(v.get("kind") == "code_scanning" and v.get("task_id") in done
+           and v.get("state") in ("task_created", "awaiting_rescan") for v in existing.values()):
+        try:
+            scanned_at = await client.last_scan_at(slug)
+        except Exception as e:  # noqa: BLE001 -- unknown means "keep waiting", never "settled"
+            logger.warning("github inbox: %s last scan time unavailable: %s", repo, e)
     decisions, gone = decide(existing, found, proj, open_auto, has_checks=has_checks,
-                             live_tasks=in_flight)
+                             live_tasks=in_flight, finished_tasks=done, scanned_at=scanned_at)
     summary = {"repo": repo, "found": len(found), "proposed": 0, "created": 0, "resolved": 0}
     for d in decisions:
         async with item_lock(repo, d.item.key):
@@ -964,14 +1081,15 @@ async def _apply_decision(store, config: Config, settings: dict, repo: str, proj
 
 
 async def poll_all(store, config: Config, *, create_task: CreateTask, notify: Notify,
-                   open_auto_count: OpenAutoCount, live_tasks: LiveTasks | None = None) -> list[dict]:
+                   open_auto_count: OpenAutoCount, live_tasks: LiveTasks | None = None,
+                   finished_tasks: FinishedTasks | None = None) -> list[dict]:
     settings = github_settings.current()
     out = []
     for repo in github_settings.enabled_projects(settings):
         try:
             out.append(await poll_project(store, config, settings, repo, create_task=create_task,
                                           notify=notify, open_auto_count=open_auto_count,
-                                          live_tasks=live_tasks))
+                                          live_tasks=live_tasks, finished_tasks=finished_tasks))
         except Exception as e:  # noqa: BLE001 -- one project's failure must not strand the others
             logger.exception("github inbox: poll failed for %s", repo)
             out.append({"repo": repo, "error": str(e)[:200]})

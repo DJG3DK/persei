@@ -798,3 +798,117 @@ async def test_tektonix_never_offers_its_own_pull_requests_back_to_itself():
         assert "pr:43" not in keys and "pr:44" not in keys, authors
     keys = {i.key for i in await gi.discover(gh, "proj", "o/proj", _proj(dependabot_prs="propose") | {"authors": "anyone"})}
     assert keys == {"pr:45", "pr:46"}, "a person's own branch named agent/... is still theirs"
+
+
+# --- a finished task whose fix GitHub did not accept (2026-10-16) ----------
+
+def _code_item(fp="a"):
+    item = gi.code_scanning_items([_code_alert(201, "js/loop-bound-injection", "high", "src/w.js", 85)],
+                                  "proj", "o/r")[0]
+    item.fingerprint = fp
+    return item
+
+
+def _done(key, task_id="t1", fp=None):
+    return {"key": key, "fingerprint": fp or _code_item().fingerprint, "state": "task_created",
+            "task_id": task_id, "created_at": 1}
+
+
+def test_a_finished_tasks_item_waits_for_a_scan_newer_than_the_task():
+    """The fix merged at 1000; code scanning last ran at 900 (or not at all):
+    the item says it is waiting, keeps its task, and offers no button yet."""
+    item = _code_item()
+    proj = _proj(code_scanning="propose")
+    for scanned in (None, 900.0, 1000.0 + gi.SCAN_MARGIN_S - 1):
+        decisions, gone = gi.decide({item.key: _done(item.key)}, [_code_item()], proj, open_auto=0,
+                                    live_tasks={"t1"}, finished_tasks={"t1": 1000.0},
+                                    scanned_at=scanned, now=5000.0)
+        assert gone == []
+        assert [(d.action, d.item.state, d.item.task_id) for d in decisions] == [("none", "awaiting_rescan", "t1")]
+        assert "waiting for GitHub to re-scan" in decisions[0].reason
+
+
+def test_after_the_scan_a_still_open_alert_comes_back_with_the_attempt_recorded():
+    item = _code_item()
+    decisions, _ = gi.decide({item.key: _done(item.key)}, [_code_item()], _proj(code_scanning="propose"),
+                             open_auto=0, live_tasks={"t1"}, finished_tasks={"t1": 1000.0},
+                             scanned_at=2000.0, now=5000.0)
+    (d,) = decisions
+    assert (d.action, d.item.state, d.item.task_id) == ("propose", "proposed", None)
+    assert d.item.attempts == [{"task_id": "t1", "finished_at": 1000.0, "still_open": [201]}]
+    assert "task t1 merged its fix, but GitHub still reports 1 alert after re-scanning" in d.reason
+
+
+def test_an_alert_gone_after_the_fix_resolves_as_before():
+    item = _code_item()
+    _, gone = gi.decide({item.key: {**_done(item.key), "state": "awaiting_rescan"}}, [], _proj(code_scanning="propose"),
+                        open_auto=0, live_tasks={"t1"}, finished_tasks={"t1": 1000.0}, scanned_at=2000.0, now=5000.0)
+    assert gone == [item.key]
+
+
+def test_waiting_unchanged_writes_nothing():
+    item = _code_item()
+    existing = {item.key: {**_done(item.key), "state": "awaiting_rescan"}}
+    decisions, _ = gi.decide(existing, [_code_item()], _proj(code_scanning="propose"), open_auto=0,
+                             live_tasks={"t1"}, finished_tasks={"t1": 1000.0}, scanned_at=None, now=5000.0)
+    assert decisions == []
+
+
+def test_other_kinds_wait_a_fixed_time_instead_of_a_scan():
+    proj = _proj(security_alerts="propose")
+    existing = {"alert:7": {"key": "alert:7", "fingerprint": "a", "state": "task_created", "task_id": "t1", "created_at": 1}}
+    found = lambda: [_item("alert:7", "security_alerts")]  # noqa: E731
+    early, _ = gi.decide(existing, found(), proj, open_auto=0, live_tasks={"t1"},
+                         finished_tasks={"t1": 1000.0}, now=1000.0 + gi.SETTLE_S - 1)
+    late, _ = gi.decide(existing, found(), proj, open_auto=0, live_tasks={"t1"},
+                        finished_tasks={"t1": 1000.0}, now=1000.0 + gi.SETTLE_S)
+    assert early[0].item.state == "awaiting_rescan" and late[0].item.state == "proposed"
+
+
+def test_an_item_with_a_rejected_fix_is_never_auto_started_again(monkeypatch):
+    """Auto with room to spare: a fix GitHub keeps rejecting must not start
+    task after task by itself."""
+    proj = _proj(code_scanning="auto") | {"max_open_auto": 5}
+    item = _code_item()
+    settled, _ = gi.decide({item.key: _done(item.key)}, [_code_item()], proj, open_auto=0, has_checks=True,
+                           live_tasks={"t1"}, finished_tasks={"t1": 1000.0}, scanned_at=2000.0, now=5000.0)
+    assert settled[0].action == "propose"
+    # ...and later, when the alert itself changes, still a proposal.
+    stored = settled[0].item.to_dict()
+    again, _ = gi.decide({item.key: stored}, [_code_item(fp="changed")], proj, open_auto=0, has_checks=True,
+                         live_tasks=set(), finished_tasks={"t1": 1000.0}, scanned_at=2000.0, now=6000.0)
+    assert [(d.action, d.item.state) for d in again] == [("propose", "proposed")]
+    assert again[0].item.attempts and "earlier fix did not clear it" in again[0].reason
+
+
+def test_a_running_task_is_still_left_alone():
+    item = _code_item()
+    decisions, _ = gi.decide({item.key: _done(item.key, task_id="t2")}, [_code_item()], _proj(code_scanning="propose"),
+                             open_auto=0, live_tasks={"t2"}, finished_tasks={"t1": 1000.0}, scanned_at=9000.0, now=9000.0)
+    assert decisions == []
+
+
+def test_the_next_tasks_goal_carries_the_earlier_attempt():
+    item = _code_item().to_dict() | {"attempts": [{"task_id": "3320a0ee-x", "finished_at": 1000.0, "still_open": [201]}]}
+    goal = gi.build_goal(item)
+    assert "earlier attempts that GitHub did not accept" in goal
+    assert "Task 3320a0ee finished and merged its fix" in goal and "#201" in goal
+    assert "does not introduce a new finding" in goal
+    assert "earlier attempts" not in gi.build_goal(_code_item())
+
+
+@pytest.mark.asyncio
+async def test_the_last_scan_time_is_read_for_the_default_branch():
+    class GH(gi.GitHubClient):
+        def __init__(self):
+            self.asked = None
+
+        async def repo(self, slug):
+            return {"default_branch": "trunk"}
+
+        async def get(self, path, params=None):
+            self.asked = (path, params)
+            return [{"created_at": "2026-10-16T18:35:00Z"}]
+    gh = GH()
+    assert await gh.last_scan_at("o/r") == 1792175700.0
+    assert gh.asked == ("/repos/o/r/code-scanning/analyses", {"ref": "refs/heads/trunk", "per_page": 1})
