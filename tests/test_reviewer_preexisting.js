@@ -24,7 +24,7 @@ test('applyBaseline with no baseline leaves everything blocking', () => {
   assert.equal(results[0].preexisting, undefined);
 });
 
-test('the agent message separates pre-existing failures and says not to fix them', () => {
+test('the agent message separates pre-existing failures and asks for a fix only when it is small', () => {
   const review = { verdict: 'NEEDS_FIXES', summary: 'One real problem.', findings: [{ severity: 'blocking', file: 'a.ts', issue: 'null deref' }] };
   const msg = buildAgentMessage(review, [
     { name: 'audit', ok: false, preexisting: true },
@@ -32,8 +32,10 @@ test('the agent message separates pre-existing failures and says not to fix them
   ]);
   assert.match(msg, /Failed checks: unit-tests/);
   assert.doesNotMatch(msg, /Failed checks: [^\n]*audit/);
-  assert.match(msg, /Pre-existing failing checks[^\n]*audit/);
-  assert.match(msg, /NOT counted against this change/);
+  assert.match(msg, /Pre-existing failing checks: audit/);
+  assert.match(msg, /NOT counted against this change and do not block it/);
+  assert.match(msg, /only if the fix is small and contained/);
+  assert.match(msg, /project-wide audit backlog, say\), leave it/);
 });
 
 test('mechanical failure is derived from non-pre-existing checks only', () => {
@@ -64,4 +66,48 @@ test('a single configured check failing on both commits is the environment, not 
     const beside = [{ name: 'audit', ok: false, output: 'x' }, { name: 'test', ok: true }];
     applyBaseline(beside, { audit: false, test: true });
     assert.ok(beside[0].preexisting && !beside[0].infrastructure);
+});
+
+
+// 2026-10-17: the model blocked three rounds on a test the harness had marked
+// pre-existing, and the agent, told not to fix it, could only argue.
+const { normalizeReview, reclassifyPreexisting } = require('../services/commit-reviewer/prompt.js');
+
+const STUDIO = '[review-tests] test:studio-paper ... ok\n[review-tests] test:studio-agent ... FAIL\n'
+  + '  operator: match\n  stack: |-\n    TestContext.<anonymous> (/workspace/tests/test_studio_agent.js:80:16)\n'
+  + '[review-tests] FAILED: test:studio-agent';
+
+test('a blocking finding about a pre-existing failure is kept as a diagnosis, not a block', () => {
+  const review = normalizeReview({ verdict: 'NEEDS_FIXES', summary: 's', findings: [
+    { severity: 'blocking', file: 'src/studio/agent.js', issue: 'test:studio-agent fails at test_studio_agent.js:80; the safeThreadId change is the prime suspect' },
+    { severity: 'blocking', file: 'src/studio/jobs.js', issue: 'a real bug: the write path is not checked' },
+  ] });
+  const moved = reclassifyPreexisting(review, [{ name: 'lint', ok: true }, { name: 'test', ok: false, preexisting: true, output: STUDIO }]);
+  assert.equal(moved, 1);
+  assert.deepEqual(review.findings.map((f) => f.severity), ['preexisting', 'blocking'], 'the real bug still blocks');
+});
+
+test('nothing is moved when the failing check is the change\'s own', () => {
+  const review = normalizeReview({ verdict: 'NEEDS_FIXES', summary: 's', findings: [
+    { severity: 'blocking', file: 'src/studio/agent.js', issue: 'test:studio-agent fails at test_studio_agent.js:80' }] });
+  assert.equal(reclassifyPreexisting(review, [{ name: 'test', ok: false, output: STUDIO }]), 0);
+  assert.equal(review.findings[0].severity, 'blocking');
+});
+
+test('a bare check name is not enough to move a finding', () => {
+  // "test" alone would match half the findings ever written.
+  const review = normalizeReview({ verdict: 'NEEDS_FIXES', summary: 's', findings: [
+    { severity: 'blocking', file: 'a.js', issue: 'this test is missing an edge case' }] });
+  assert.equal(reclassifyPreexisting(review, [{ name: 'test', ok: false, preexisting: true, output: 'no markers here' }]), 0);
+});
+
+test('the reviewer can file a diagnosis, and the agent is shown it with the harness output', () => {
+  const review = normalizeReview({ verdict: 'READY', summary: 'fine', findings: [
+    { severity: 'Pre-existing', file: 'tests/test_studio_agent.js', issue: 'validate_code dry-runs on market data the harness does not have; give the test a fixture' }] });
+  assert.equal(review.findings[0].severity, 'preexisting');
+  const msg = buildAgentMessage(review, [{ name: 'test', ok: false, preexisting: true, output: STUDIO }]);
+  assert.match(msg, /The reviewer's diagnosis \(tests\/test_studio_agent.js\): validate_code dry-runs/);
+  assert.match(msg, /--- test \(pre-existing\) ---[\s\S]*test:studio-agent \.\.\. FAIL/);
+  assert.match(msg, /"it passes for me"/);
+  assert.doesNotMatch(msg, /Other findings/, 'a diagnosis is not filed as a minor finding');
 });

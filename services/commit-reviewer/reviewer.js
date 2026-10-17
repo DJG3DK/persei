@@ -44,6 +44,7 @@ const {
   REVIEW_DIRECT, readWorktreeFile, gatherExistingTestCoverage, gatherReferencedFiles,
   REVIEW_RESPONSE_MARKER, extractAgentResponses, reviewWithSonnet, stripLeakedMarkup,
   buildAgentMessage,
+  reclassifyPreexisting,
 } = require('./prompt');
 // The review checkout: built, provisioned, torn down and swept. See worktree.js.
 const worktree = require('./worktree');
@@ -241,11 +242,13 @@ function computeFileChurn(project, currentFindings, branch = null) {
     if (branch && entry.branch && entry.branch !== branch) continue;
     if (!entry.reviewedAt || new Date(entry.reviewedAt).getTime() < cutoff) continue;
     for (const f of entry.findings || []) {
-      if (f?.file) bump(f.file);
+      // A diagnosis of a pre-existing failure is about the base commit, not
+      // this branch going round in circles.
+      if (f?.file && f.severity !== 'preexisting') bump(f.file);
     }
   }
   for (const f of currentFindings || []) {
-    if (f?.file) bump(f.file);
+    if (f?.file && f.severity !== 'preexisting') bump(f.file);
   }
 
   let churnFile = null;
@@ -613,6 +616,14 @@ async function reviewProject(project, cfg, routerKey, requested = null) {
         + `nothing was learned about this commit either way. This is a fault in the review harness, `
         + `not in the code under review -- it cannot be fixed from inside the repository, and the `
         + `commit is blocked only because an unrun check cannot be counted as a pass.\n\n${review.summary || ''}`;
+    }
+    // A pre-existing failure cannot block, whatever the model filed it as.
+    const reclassified = reclassifyPreexisting(review, checkResults);
+    if (reclassified) {
+      const names = checkResults.filter((c) => !c.ok && c.preexisting).map((c) => c.name).join(', ');
+      review.summary = `Not blocking: ${names} also fail${names.includes(',') ? '' : 's'} on the base commit in the `
+        + `review harness, so ${reclassified === 1 ? 'the finding that blamed this change for it was' : `the ${reclassified} findings that blamed this change for it were`} `
+        + `kept as a diagnosis instead.\n\n${review.summary || ''}`;
     }
     const hasBlockingFindings = (review.findings || []).some((f) => f.severity === 'blocking');
     // audit H-9: ANY omitted file forces NEEDS_FIXES in NODE -- not left to
