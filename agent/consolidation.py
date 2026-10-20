@@ -112,6 +112,11 @@ Good candidates to add: a recurring failure mode across multiple episodes (worth
 a convention that got violated and caused an escalation (worth stating explicitly so it doesn't \
 happen again), a gotcha that cost real iterations/budget to discover.
 
+Some episodes carry `reflections`: what the task wrote after each failed attempt (what failed, why, \
+what to do next). They are the best evidence of a project-specific gotcha, but only a task that went on \
+to ship CONFIRMED its reflection; one from a task that escalated is an unproven guess. Turn a confirmed \
+reflection that would apply again into a standing warning; do not record an unconfirmed one as fact.
+
 Bad candidates to add: one-off task-specific details that won't matter again, anything already \
 captured in the current memory, vague restatements that don't add real information.
 
@@ -208,6 +213,7 @@ async def run_consolidation(config: Config, repo: str, checkpointer, store: Base
         f"cost=${e['cost_usd']:.2f}, iterations={e['iteration_count']}"
         + (f", escalation_reason={e['escalation_reason']!r}" if e.get("escalation_reason") else "")
         + (f", review_verdict={e['review_verdict']!r}" if e.get("review_verdict") else "")
+        + (f", reflections={e['reflections']!r}" if e.get("reflections") else "")
         for e in episodes
     )
 

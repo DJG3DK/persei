@@ -276,6 +276,22 @@ KNOBS: dict[str, dict] = {
         "env": None,
         "group": "Context",
     },
+    "reflect_on_failure": {
+        "label": "Reflect after a failed attempt",
+        "help": (
+            "When a task's checks fail, the review gate asks for fixes, or GitHub Actions fails, "
+            "one short model call writes what failed, why, and what to do differently, and the "
+            "next attempt starts from it (1); or the agent goes straight back to fixing with only "
+            "the failure text, as it did before 2026-10-17 (0). About a cent per failed attempt. "
+            "The reflections are also kept in the task's episode for nightly memory to learn from."
+        ),
+        "unit": "1 = on, 0 = off",
+        "default": 1.0,
+        "min": 0.0,
+        "max": 1.0,
+        "env": None,
+        "group": "Context",
+    },
     "memory_progressive_disclosure": {
         "label": "Split project memory into sections",
         "help": (

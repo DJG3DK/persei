@@ -143,7 +143,7 @@ def test_the_shipped_defaults_are_the_operators_proven_values():
         "planning_model_call_timeout_s": 1200, "check_lint_timeout_s": 600, "check_typecheck_timeout_s": 600,
         "check_test_timeout_s": 900, "check_review_test_timeout_s": 900, "frontend_build_timeout_s": 600,
         "sandbox_command_timeout_s": 300, "summarization_trigger_tokens": 250000, "summarization_keep_tokens": 90000,
-        "memory_progressive_disclosure": 1, "memory_inline_token_budget": 3000, "review_wait_timeout_s": 1800, "ci_wait_timeout_s": 3600,
+        "memory_progressive_disclosure": 1, "reflect_on_failure": 1, "memory_inline_token_budget": 3000, "review_wait_timeout_s": 1800, "ci_wait_timeout_s": 3600,
         "auto_heal_attempts": 3,
     }
     assert set(proven) == set(rs.KNOBS), "a knob was added or removed; decide its shipped default here too"

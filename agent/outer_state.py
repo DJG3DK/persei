@@ -72,6 +72,11 @@ class AgentState(TypedDict):
     # work.py's own docstring for the four cases this distinguishes).
     pending_feedback: str | None
 
+    # The task's reflections on its failed attempts, newest last, at most
+    # three (agent/reflection.py). Read by the next reflection so it does not
+    # propose what already failed, and written into the task's episode.
+    reflections: list[str]
+
     # Human-in-the-loop pre-execution approval -- see deep_agent.py's own
     # INTERRUPT_ON comment. Set by work_node when the inner deep-agent
     # thread hits a native LangGraph interrupt() (a tool call matched
@@ -245,6 +250,7 @@ def initial_state(
         review_gate_result=None,
         committed_sha=None,
         pending_feedback=None,
+        reflections=[],
         pending_approval=None,
         approval_decision=None,
         latest_todos=None,

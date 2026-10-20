@@ -365,7 +365,44 @@ async def _write_episode(store: BaseStore, state: AgentState, result: dict,
         "iteration_count": state["iteration_count"],
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    # What the task told itself after each failed attempt (agent/reflection.py),
+    # for consolidation to learn from: confirmed if this outcome is "shipped".
+    if state.get("reflections"):
+        record["reflections"] = list(state["reflections"])
     await write_episode(store, config, state["repo"], record)
+
+
+async def _add_reflection(state: AgentState, result: dict, kind: str, config: Config) -> None:
+    """agent/reflection.py: a failed attempt's three-line reflection leads the
+    next attempt's feedback, and is kept on the task and in its episode."""
+    from agent import reflection, workspaces
+    from agent.tools.git import _git
+
+    repo = state["repo"]
+    touched = ""
+    try:
+        root = (await workspaces.ensure(repo, state["task_id"]))["path"]
+        base = (PROJECTS.get(repo) or {}).get("base_branch") or "main"
+        r = await _git(f"diff --stat {base}...HEAD", root, timeout=15)
+        touched = str(r.get("output") or "") if r.get("ok") else ""
+    except Exception:  # noqa: BLE001 -- the reflection is fine without it
+        pass
+    earlier = list(state.get("reflections") or [])
+    note = await reflection.reflect(config, task_id=state["task_id"], goal=state.get("goal") or "",
+                                    kind=kind, feedback=result["pending_feedback"],
+                                    touched=touched, earlier=earlier)
+    if not note:
+        return
+    result["pending_feedback"] = reflection.as_feedback(note) + "\n\n" + result["pending_feedback"]
+    result["reflections"] = (earlier + [note])[-reflection.KEEP:]
+    result["execution_log"] = [*(result.get("execution_log") or []), {
+        "node": "verify_and_ship",
+        "step_id": None,
+        "summary": "reflected on the failure before the next attempt",
+        "detail": note,
+        "cost_usd": 0.0,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }]
 
 
 def _is_terminal(result: dict) -> bool:
@@ -409,6 +446,11 @@ async def verify_and_ship_node(state: AgentState, app_config: Config, pg_store: 
     # comment on why those literal names collide with LangGraph's node-kwarg
     # auto-injection.
     result = await _verify_and_ship(state, app_config, pg_store)
+    # Popped whatever happens: it is a note between this node's paths and
+    # this wrapper, not part of the task's state.
+    kind = result.pop("reflect_on", None)
+    if kind and result.get("pending_feedback") and _rs.as_int("reflect_on_failure"):
+        await _add_reflection(state, result, kind, app_config)
     if _is_terminal(result):
         await _write_episode(pg_store, state, result, app_config)
     return result
@@ -629,7 +671,8 @@ async def _verify_and_ship_inner(state: AgentState, repo: str, repo_root: str,
             "regardless, so if you don't verify first you're just guessing whether this attempt "
             "actually fixed it."
         )
-        return _loop_back("checks failed, looping back with feedback", feedback, state, no_diff_streak=0)
+        return {**_loop_back("checks failed, looping back with feedback", feedback, state, no_diff_streak=0),
+                "reflect_on": "checks"}
 
     diff = await git_diff(repo_root)
     pending_sha = state.get("committed_sha")
@@ -1115,6 +1158,7 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
             return {
                 "iteration_count": state["iteration_count"] + 1,
                 "pending_feedback": feedback,
+                "reflect_on": "review",
                 "no_diff_streak": 0,
                 "committed_sha": sha,
                 "review_gate_result": review,
@@ -1185,6 +1229,7 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
         if not ci["ok"] and ci.get("reason") == "failed":
             return {
                 "iteration_count": state["iteration_count"] + 1,
+                "reflect_on": "ci",
                 "pending_feedback": (
                     f"GitHub Actions failed on {sha[:12]}, so it was NOT merged. The review gate and "
                     f"the operator had passed it; CI did not:\n\n{describe_failures(ci['failed'])}\n\n"
