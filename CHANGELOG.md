@@ -5,8 +5,7 @@
 Same agent, new name. Tektonix was one letter away from a company that got
 there first, so it's Persei now, after the stars of Perseus.
 
-- Find it at [perseiagent.ai](https://perseiagent.ai), the dashboard at
-  agent.perseiagent.ai, and the code at
+- Find it at [perseiagent.ai](https://perseiagent.ai) and the code at
   [DJG3DK/persei](https://github.com/DJG3DK/persei). The old addresses
   redirect.
 - A new logo: the Perseus constellation with a gold diamond P in it.
