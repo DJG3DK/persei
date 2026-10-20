@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.9.4 — Tektonix is now Persei
+
+Same agent, new name. Tektonix was one letter away from a company that got
+there first, so it's Persei now, after the stars of Perseus.
+
+- Find it at [perseiagent.ai](https://perseiagent.ai), the dashboard at
+  agent.perseiagent.ai, and the code at
+  [DJG3DK/persei](https://github.com/DJG3DK/persei). The old addresses
+  redirect.
+- A new logo: the Perseus constellation with a gold diamond P in it.
+- Updating from Tektonix replaces it. On Windows the old install is removed
+  first, on Linux the .deb and the AppImage take its place. Your settings,
+  projects and history stay where they were.
+- Passkeys belong to the address they were made on. Sign in with your
+  password on the new one and add a passkey again.
+
+Also in this release:
+
+- After a failed attempt the agent stops and writes down what went wrong
+  and what to try next, before it tries again. Fewer rounds of the same fix.
+- A test that was already failing before the agent touched anything no
+  longer blocks its work. The reviewer says what's wrong with it, and the
+  agent fixes it when the fix is small.
+- A GitHub alert whose task finished but didn't actually fix it comes back
+  to the inbox, ready for another go.
+
 ## v0.9.3 — a clean release
 
 A small one. Nothing changes in the apps.
