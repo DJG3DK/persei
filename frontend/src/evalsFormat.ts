@@ -41,7 +41,7 @@ export function scorecardText(run: EvalRunSummary): string {
     .map(([c, v]) => `${c} ${v.passed}/${v.tasks}`)
     .join(", ");
   return [
-    `Tektonix golden suite, ${day(run.started_at)}: ${run.tasks_passed}/${run.tasks_attempted} tasks passed (${pct(run.pass_rate)}),`,
+    `Persei golden suite, ${day(run.started_at)}: ${run.tasks_passed}/${run.tasks_attempted} tasks passed (${pct(run.pass_rate)}),`,
     `${pct(b.first_pass_rate as number | undefined)} passed independent review first time,`,
     `${b.escalated ?? 0} escalated, ${usd(run.total_cost_usd)} total${perTask}, ${minutes(run.duration_s)}.`,
     cats ? `By category: ${cats}.` : "",

@@ -73,8 +73,8 @@ describe("App — signed out", () => {
   it("shows the sign-in form: this host is the console, nothing else", async () => {
     // Before the split there was a landing page in front of this, and the
     // opening getMe() 401 had to be told apart from a real expiry so a
-    // visitor was not shoved past it. tektonix.io serves that page now, and
-    // agent.tektonix.io is the console -- so signed out simply means sign in.
+    // visitor was not shoved past it. perseiagent.ai serves that page now, and
+    // agent.perseiagent.ai is the console -- so signed out simply means sign in.
     getMe.mockRejectedValue(new Error("401"));
     render(<App />);
     expect(await screen.findByRole("heading", { name: /sign in/i })).toBeInTheDocument();
@@ -86,8 +86,8 @@ describe("App — signed out", () => {
     render(<App />);
     await screen.findByRole("heading", { name: /sign in/i });
     expect(document.body.textContent).not.toMatch(/autonomous coding agent/i);
-    expect(screen.getByRole("link", { name: /what is tektonix/i }))
-      .toHaveAttribute("href", "https://tektonix.io");
+    expect(screen.getByRole("link", { name: /what is persei/i }))
+      .toHaveAttribute("href", "https://perseiagent.ai");
   });
 });
 

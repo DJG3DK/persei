@@ -100,7 +100,7 @@ async def push_test(request: Request, user: User = Depends(require_full_auth)):
     sent = 0
     for t in targets:
         ok, status = await push.send_one(
-            t, "Tektonix", "Push is working. This is a test from Settings.",
+            t, "Persei", "Push is working. This is a test from Settings.",
             url="/", tag="tektonix-test")
         if ok:
             sent += 1

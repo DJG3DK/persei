@@ -1,6 +1,6 @@
-# Tektonix model router configuration -- EXAMPLE.
+# Persei model router configuration -- EXAMPLE.
 #
-# This file is the seed for a fresh Tektonix install. It defines one entry
+# This file is the seed for a fresh Persei install. It defines one entry
 # per agent-* role in agent/model_config.py MANAGED_ROLES (the Models page's
 # seats; tests/test_managed_roles_complete.py keeps the two lists in step),
 # including agent-reviewer, which the commit-reviewer service resolves by

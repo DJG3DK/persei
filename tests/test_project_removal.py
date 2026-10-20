@@ -425,7 +425,7 @@ def test_a_failed_archive_removes_nothing(wired, monkeypatch, store):
 #
 # The default above is still "the repository is never touched". This is the
 # opt-in for the one case where that leaves the operator in a shell: a
-# repository Tektonix cloned by itself and nobody wanted.
+# repository Persei cloned by itself and nobody wanted.
 
 def _no_pm2(monkeypatch) -> None:
     """Answer the "what does this box run from it" probe without depending on

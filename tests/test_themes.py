@@ -140,7 +140,7 @@ def test_the_landing_page_is_not_themed():
     and therefore no preference, and the brand should not depend on whoever
     signed in last.
 
-    It lives in site/ now, built and served separately (tektonix.io), which is
+    It lives in site/ now, built and served separately (perseiagent.ai), which is
     what makes this structural rather than a convention: it carries its own
     copy of the Drafting tokens and never imports the console's stylesheet,
     so the five schemes cannot reach it even by accident.

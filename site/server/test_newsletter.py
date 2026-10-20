@@ -354,15 +354,15 @@ def test_the_windows_download_follows_the_latest_full_release(monkeypatch):
     and this sends the browser to whatever release is latest now."""
     newsletter.reset_download_cache()
     fake = _FakeGitHub({"assets": [
-        {"name": "latest.json", "browser_download_url": "https://github.com/DJG3DK/tektonix/releases/download/v0.9.0/latest.json"},
-        {"name": "Tektonix_0.9.0_x64-setup.exe", "browser_download_url": "https://github.com/DJG3DK/tektonix/releases/download/v0.9.0/Tektonix_0.9.0_x64-setup.exe"},
-        {"name": "Tektonix_0.9.0_x64-setup.exe.sig", "browser_download_url": "https://github.com/DJG3DK/tektonix/releases/download/v0.9.0/Tektonix_0.9.0_x64-setup.exe.sig"},
+        {"name": "latest.json", "browser_download_url": "https://github.com/DJG3DK/persei/releases/download/v0.9.0/latest.json"},
+        {"name": "Persei_0.9.0_x64-setup.exe", "browser_download_url": "https://github.com/DJG3DK/persei/releases/download/v0.9.0/Persei_0.9.0_x64-setup.exe"},
+        {"name": "Persei_0.9.0_x64-setup.exe.sig", "browser_download_url": "https://github.com/DJG3DK/persei/releases/download/v0.9.0/Persei_0.9.0_x64-setup.exe.sig"},
     ]})
     monkeypatch.setattr(newsletter.httpx, "AsyncClient", fake)
     with TestClient(newsletter.app) as c:
         r = c.get("/download/windows", follow_redirects=False)
         assert r.status_code == 302
-        assert r.headers["location"].endswith("/v0.9.0/Tektonix_0.9.0_x64-setup.exe")
+        assert r.headers["location"].endswith("/v0.9.0/Persei_0.9.0_x64-setup.exe")
         c.get("/download/windows", follow_redirects=False)
     assert fake.calls == 1, "cached"
 
@@ -374,7 +374,7 @@ def test_the_windows_download_falls_back_to_the_release_page(monkeypatch):
         r = c.get("/download/windows", follow_redirects=False)
     assert r.status_code == 302 and r.headers["location"] == newsletter.RELEASES_PAGE
     newsletter.reset_download_cache()
-    other = _FakeGitHub({"assets": [{"name": "Tektonix_0.9.0_x64-setup.exe",
+    other = _FakeGitHub({"assets": [{"name": "Persei_0.9.0_x64-setup.exe",
                                      "browser_download_url": "https://evil.example/x.exe"}]})
     monkeypatch.setattr(newsletter.httpx, "AsyncClient", other)
     with TestClient(newsletter.app) as c:
@@ -383,25 +383,25 @@ def test_the_windows_download_falls_back_to_the_release_page(monkeypatch):
 
 
 def test_the_linux_downloads_follow_the_latest_full_release(monkeypatch):
-    base = "https://github.com/DJG3DK/tektonix/releases/download/v0.9.2/"
+    base = "https://github.com/DJG3DK/persei/releases/download/v0.9.2/"
     newsletter.reset_download_cache()
     fake = _FakeGitHub({"assets": [
         {"name": n, "browser_download_url": base + n} for n in (
-            "Tektonix_0.9.2_x64-setup.exe", "Tektonix_0.9.2_amd64.AppImage",
-            "Tektonix_0.9.2_amd64.AppImage.sig", "Tektonix_0.9.2_amd64.deb", "latest.json")
+            "Persei_0.9.2_x64-setup.exe", "Persei_0.9.2_amd64.AppImage",
+            "Persei_0.9.2_amd64.AppImage.sig", "Persei_0.9.2_amd64.deb", "latest.json")
     ]})
     monkeypatch.setattr(newsletter.httpx, "AsyncClient", fake)
     with TestClient(newsletter.app) as c:
-        assert c.get("/download/linux", follow_redirects=False).headers["location"] == base + "Tektonix_0.9.2_amd64.AppImage"
-        assert c.get("/download/linux-deb", follow_redirects=False).headers["location"] == base + "Tektonix_0.9.2_amd64.deb"
-        assert c.get("/download/windows", follow_redirects=False).headers["location"] == base + "Tektonix_0.9.2_x64-setup.exe"
+        assert c.get("/download/linux", follow_redirects=False).headers["location"] == base + "Persei_0.9.2_amd64.AppImage"
+        assert c.get("/download/linux-deb", follow_redirects=False).headers["location"] == base + "Persei_0.9.2_amd64.deb"
+        assert c.get("/download/windows", follow_redirects=False).headers["location"] == base + "Persei_0.9.2_x64-setup.exe"
 
 
 def test_a_release_without_a_linux_app_sends_linux_to_the_release_page(monkeypatch):
     newsletter.reset_download_cache()
     monkeypatch.setattr(newsletter.httpx, "AsyncClient", _FakeGitHub({"assets": [
-        {"name": "Tektonix_0.9.1_x64-setup.exe",
-         "browser_download_url": "https://github.com/DJG3DK/tektonix/releases/download/v0.9.1/Tektonix_0.9.1_x64-setup.exe"}]}))
+        {"name": "Persei_0.9.1_x64-setup.exe",
+         "browser_download_url": "https://github.com/DJG3DK/persei/releases/download/v0.9.1/Persei_0.9.1_x64-setup.exe"}]}))
     with TestClient(newsletter.app) as c:
         r = c.get("/download/linux", follow_redirects=False)
     assert r.headers["location"] == newsletter.RELEASES_PAGE

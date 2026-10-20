@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/DJG3DK/tektonix/security/advisories/new
+    url: https://github.com/DJG3DK/persei/security/advisories/new
     about: Report privately — please do not open a public issue.
   - name: Installation guide
-    url: https://github.com/DJG3DK/tektonix/blob/main/INSTALL.md
+    url: https://github.com/DJG3DK/persei/blob/main/INSTALL.md
     about: Setup, configuration reference and troubleshooting.

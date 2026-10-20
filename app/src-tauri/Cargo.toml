@@ -1,8 +1,8 @@
 [package]
 name = "tektonix"
 version = "0.9.0"
-description = "Tektonix desktop: the dashboard in a window, the stack under it"
-authors = ["Tektonix"]
+description = "Persei desktop: the dashboard in a window, the stack under it"
+authors = ["Persei"]
 edition = "2021"
 rust-version = "1.80"
 

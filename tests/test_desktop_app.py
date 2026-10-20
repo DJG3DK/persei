@@ -163,7 +163,7 @@ def test_the_desktop_docs_describe_the_app_as_it_is():
     assert "never overwritten" not in app_readme, "prepare adds the app's own lines to .env"
     for text, where in ((app_readme, "app/README.md"), (stack, "stack.rs")):
         assert f"%LOCALAPPDATA%\\{conf['identifier']}" in text, f"{where}: the data path is under the bundle identifier"
-        assert "%LOCALAPPDATA%\\Tektonix`" not in text and "%LOCALAPPDATA%\\Tektonix\n" not in text, where
+        assert "%LOCALAPPDATA%\\Persei`" not in text and "%LOCALAPPDATA%\\Persei\n" not in text, where
     assert "dashboard.json" not in (REPO / "frontend/src/components/TitleBar.tsx").read_text()
     for doc in ("README.md", "INSTALL.md"):
         assert "x64-setup.exe" in (REPO / doc).read_text(), f"{doc} points Windows users at the desktop installer"

@@ -1,6 +1,6 @@
 """Who is speaking, in the agent's own conversation.
 
-Everything Tektonix itself says to the model or refuses it -- a guard's
+Everything Persei itself says to the model or refuses it -- a guard's
 refusal, a checkpoint, the ship gate's feedback, a handover to another seat,
 the framing of a benchmark task -- is marked as the harness, and what the
 operator wrote is marked as the operator. A trajectory is read by the
@@ -10,7 +10,7 @@ should have to guess which words were the system's (operator's rule,
 """
 from __future__ import annotations
 
-HARNESS = "[Tektonix harness]"
+HARNESS = "[Persei harness]"
 OPERATOR = "[operator]"
 
 

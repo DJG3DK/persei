@@ -2,7 +2,7 @@ import { useState } from "react";
 import { forgotPassword, login, passkeyLoginOptions, passkeyLoginVerify, resetPassword, verify2FA } from "../api";
 import { credentialJSON, passkeyErrorText, passkeysSupported, requestOptions } from "../passkeys";
 import type { CurrentUser } from "../types";
-import logoUrl from "../assets/tektonix-logo.png";
+import logoUrl from "../assets/persei-logo.png";
 import "./LoginPage.css";
 
 interface Props {
@@ -14,7 +14,7 @@ type Mode = "login" | "2fa" | "forgot" | "reset" | "reset-done";
 /* The card's mark. Defined once because it appears in all five states, and a
    wordmark that drifts between them is the kind of thing nobody notices until
    it is in a screenshot. Decorative: the <h1> under it already names the
-   screen, so the alt is empty rather than repeating "Tektonix" to a screen
+   screen, so the alt is empty rather than repeating "Persei" to a screen
    reader on every single view. */
 function LoginMark() {
   return <img className="login-mark" src={logoUrl} alt="" />;
@@ -23,12 +23,12 @@ function LoginMark() {
 /* Shown under the card on every login view. It has been three things: a link
    to the source, then a way back to the landing page that sat in front of
    this screen, and now a link to that page on its own host -- because the
-   console moved to agent.tektonix.io and there is nothing behind this form to
+   console moved to agent.perseiagent.ai and there is nothing behind this form to
    go "back" to any more. */
 function LoginLinks() {
   return (
     <div className="login-links">
-      <a href="https://tektonix.io">&lsaquo; What is Tektonix?</a>
+      <a href="https://perseiagent.ai">&lsaquo; What is Persei?</a>
     </div>
   );
 }

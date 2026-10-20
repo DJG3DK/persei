@@ -45,7 +45,8 @@ ROUTING_LOG = Path(
 # copies of "AGENT_TOOL_EVENTS_LOG or logs/tool_events.jsonl" can drift, and a
 # reader pointed somewhere the writer is not reports zero tool calls.
 TOOL_EVENTS_LOG = tool_events.LOG_PATH
-_HARNESS_TOOL = re.compile(r"^\[Tektonix harness\][^`]*`([A-Za-z0-9_\-]+)`")
+# Recorded before 0.9.4 the harness was "[Tektonix harness]"; old rows still parse.
+_HARNESS_TOOL = re.compile(r"^\[(?:Persei|Tektonix) harness\][^`]*`([A-Za-z0-9_\-]+)`")
 
 
 def _rows(path: Path, since: float) -> list[dict]:

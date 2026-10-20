@@ -182,8 +182,8 @@ async def gate_on_actions(project: str, branch: str, sha: str, title: str, *, ti
     try:
         pr = await github_repos.open_pull_request(
             token, slug, head=branch, base=base, title=title,
-            body=(f"Opened by Tektonix for task branch `{branch}`. The review gate and the operator "
-                  f"have passed `{sha[:12]}`; Tektonix fast-forwards `{base}` to it once GitHub Actions "
+            body=(f"Opened by Persei for task branch `{branch}`. The review gate and the operator "
+                  f"have passed `{sha[:12]}`; Persei fast-forwards `{base}` to it once GitHub Actions "
                   f"pass, which closes this pull request as merged."),
         )
     except (PermissionError, LookupError, ValueError, httpx.HTTPError) as e:

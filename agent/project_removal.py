@@ -2,7 +2,7 @@
 
 The rule this module is built around, and the reason it is not just three
 lines of rmtree: **the live repository is never touched.** Removing a project
-from Tektonix means the agent forgets it -- the worktree it built in, the
+from Persei means the agent forgets it -- the worktree it built in, the
 deploy key it minted, the memory it accumulated -- and means nothing at all
 about the operator's own checkout, their branches, their remote, or their
 code. A "remove" that deleted someone's repository because they wanted the
@@ -331,7 +331,7 @@ def remove_project_entry(projects_path: Path, repo: str) -> bool:
 #
 # Everything above leaves the live repository alone, and that is still the
 # default and still the promise. This section is the one case where it is not
-# what the operator wants: a repository Tektonix cloned by itself minutes ago,
+# what the operator wants: a repository Persei cloned by itself minutes ago,
 # usually because a stale list offered to add something that was already
 # there. Removing the project then leaves 16MB of clone behind and a shell is
 # the only way to finish the job -- which is a manual step inside a flow the

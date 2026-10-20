@@ -1,5 +1,5 @@
 /* ============================================================================
-   Tektonix design tokens
+   Persei design tokens
    ----------------------------------------------------------------------------
    Rebuilt 2026-08-25. Three things drove it:
 
@@ -22,7 +22,7 @@
      Four steps, each a real step. The old palette had surface and
      surface-raised only ~6% apart, so cards on cards vanished.            */
   /* DRAFTING scheme (2026-09-15). The lavender-on-navy palette went with
-     the old name; this one goes with the plumb line. Blue-graphite ground —
+     the old name; this one went with the plumb line and suits the gold gem. Blue-graphite ground —
      cooler and less saturated than the navy, so brass reads as the only warm
      thing on screen — with AMBIENT LIGHT still painted at the body level
      (see App.css), because that is what makes it feel lit rather than dark.
@@ -45,7 +45,7 @@
 
   /* ── Accent ──────────────────────────────────────────────────────────── */
   /* Brass. The one warm colour in the product, and the same brass as the
-     plumb bob in the mark. NOT a state colour: --amber below was moved to a
+     gold in the mark, near enough. NOT a state colour: --amber below was moved to a
      pure yellow so "waiting" can never be confused with an accent. */
   --accent:       #c9a227;   /* 6.76:1 */
   --accent-hover: #e0b63a;   /* 8.51:1 */

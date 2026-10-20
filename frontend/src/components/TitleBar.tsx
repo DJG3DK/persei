@@ -48,7 +48,7 @@ export function TitleBar() {
   if (!win) return null;
   return (
     <div className="titlebar" data-tauri-drag-region data-testid="titlebar">
-      <span className="titlebar-name" data-tauri-drag-region>Tektonix</span>
+      <span className="titlebar-name" data-tauri-drag-region>Persei</span>
       <button type="button" className="titlebar-link" onClick={openPanel}>Control panel</button>
       <span className="titlebar-controls">
         <button type="button" className="titlebar-btn" aria-label="Minimise" onClick={() => void win.minimize()}>&#x2500;</button>

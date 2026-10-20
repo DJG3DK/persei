@@ -96,7 +96,7 @@ MANAGED_KEYS: tuple[ManagedKey, ...] = (
     ManagedKey("SMTP_FROM", AGENT_ENV, "From address", "What recipients see.", "Email", ("tektonix",), secret=False),
     ManagedKey(
         "GIT_USER_NAME", AGENT_ENV, "Commit author name",
-        "Who the agent's commits are from. Blank: this machine's git config (host) or \"Tektonix\" (bundle).",
+        "Who the agent's commits are from. Blank: this machine's git config (host) or \"Persei\" (bundle).",
         "Git", ("tektonix",), secret=False,
     ),
     ManagedKey(

@@ -27,7 +27,7 @@
   height: 30px;
   width: auto;
   display: block;
-  /* the PNG's light-blue wordmark sits well on the navy ground as-is */
+  /* the PNG's light wordmark sits well on the dark ground as-is */
 }
 
 .new-task-btn {

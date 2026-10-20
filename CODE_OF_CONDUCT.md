@@ -60,7 +60,7 @@ representative at an online or offline event.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the maintainer privately through
-[GitHub's private reporting form](https://github.com/DJG3DK/tektonix/security/advisories/new)
+[GitHub's private reporting form](https://github.com/DJG3DK/persei/security/advisories/new)
 — it is the private channel this repository has, and it reaches only the
 maintainer.
 

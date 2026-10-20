@@ -1,5 +1,5 @@
 //! Quitting. The tray's Quit, and the window's close button when the person
-//! has chosen it, shut Tektonix down: the stack's containers stop, and so
+//! has chosen it, shut Persei down: the stack's containers stop, and so
 //! does Docker Desktop when this app is what started it. Until 2026-10-03
 //! Quit left the stack running ("the stack keeps running"), and the
 //! containers went on holding gigabytes of memory with no window left to

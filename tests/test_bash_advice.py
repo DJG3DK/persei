@@ -347,7 +347,7 @@ def test_a_benchmark_refusal_has_a_kind_the_work_node_can_read():
     assert bash_advice.kind_of_result(refusal("git fsck") + "\n") == "benchmark-refused"
     _, note = screen("git log --all | head ; git status")
     assert bash_advice.kind_of_result(note + "\nexit_code=0\n") == "benchmark-refused"
-    assert bash_advice.kind_of_result("[Tektonix harness] ERROR: REFUSED without retrying") is None, "the edit guard's"
+    assert bash_advice.kind_of_result("[Persei harness] ERROR: REFUSED without retrying") is None, "the edit guard's"
 
 
 def test_the_read_and_edit_notes_stop_after_two_per_workspace(tmp_path, monkeypatch):

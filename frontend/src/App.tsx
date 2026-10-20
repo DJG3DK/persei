@@ -457,7 +457,7 @@ export default function App() {
   useEffect(() => {
     // Clearing the user is the whole job now: signed out on this host IS the
     // login form. It used to also have to push past a landing page that sat
-    // in front of it, which is gone with the split to tektonix.io.
+    // in front of it, which is gone with the split to perseiagent.ai.
     setAuthFailureHandler(() => setUser(null));
     return () => setAuthFailureHandler(null);
   }, []);
@@ -482,9 +482,9 @@ export default function App() {
       </div>
     );
   } else if (!user) {
-    // The console is its own host now (agent.tektonix.io), so signed out means
+    // The console is its own host now (agent.perseiagent.ai), so signed out means
     // the sign-in form -- there is no public page in front of it to go back
-    // to. tektonix.io serves the landing page, built separately from site/.
+    // to. perseiagent.ai serves the landing page, built separately from site/.
     page = <LoginPage onLoggedIn={setUser} />;
   } else if (user.must_change_password) {
     page = <ChangePasswordPage onDone={() => setUser({ ...user, must_change_password: false })} />;

@@ -123,6 +123,6 @@ def test_a_bounded_subagent_is_told_to_report_before_its_cap():
     outs = [mw.wrap_tool_call(SimpleNamespace(tool_call={"id": str(i)}),
                               lambda r: ToolMessage(content="ok", tool_call_id=r.tool_call["id"])).content
             for i in range(30)]
-    noted = [i + 1 for i, c in enumerate(outs) if "[Tektonix harness]" in c]
+    noted = [i + 1 for i, c in enumerate(outs) if "[Persei harness]" in c]
     assert noted == [20, 26]
     assert "Send your report NOW, opening with the VERDICT line" in outs[25]

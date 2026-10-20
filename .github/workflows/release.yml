@@ -187,7 +187,7 @@ jobs:
       - run: npm ci
         working-directory: app
       # The installer, the updater manifest and the app's own version carry
-      # the tag: Tektonix_0.9.0-rc13_x64-setup.exe, not a file named 0.9.0
+      # the tag: Persei_0.9.0-rc13_x64-setup.exe, not a file named 0.9.0
       # for every candidate. Build-time only; nothing is committed. The tag
       # was checked against vX.Y.Z[-suffix] by the gate job, so what goes
       # into the sed is a version and nothing else.
@@ -227,7 +227,7 @@ jobs:
           done
           cargo install trusted-signing-cli --locked
           # shellcheck disable=SC2016 # a JavaScript template literal, expanded by node
-          node -e 'const fs=require("fs");const f="src-tauri/tauri.conf.json";const j=JSON.parse(fs.readFileSync(f,"utf8"));j.bundle=j.bundle||{};j.bundle.windows=j.bundle.windows||{};j.bundle.windows.signCommand=`trusted-signing-cli -e ${process.argv[1]} -a ${process.argv[2]} -c ${process.argv[3]} -d Tektonix %1`;fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$SIGN_ENDPOINT" "$SIGN_ACCOUNT" "$SIGN_PROFILE"
+          node -e 'const fs=require("fs");const f="src-tauri/tauri.conf.json";const j=JSON.parse(fs.readFileSync(f,"utf8"));j.bundle=j.bundle||{};j.bundle.windows=j.bundle.windows||{};j.bundle.windows.signCommand=`trusted-signing-cli -e ${process.argv[1]} -a ${process.argv[2]} -c ${process.argv[3]} -d Persei %1`;fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$SIGN_ENDPOINT" "$SIGN_ACCOUNT" "$SIGN_PROFILE"
           echo "enabled=true" >> "$GITHUB_OUTPUT"
       # Builds the NSIS installer, signs the updater artifact with the key in
       # the secrets, and attaches the installer, its .sig and latest.json to
@@ -250,7 +250,7 @@ jobs:
         with:
           projectPath: app
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: "Tektonix ${{ github.event.inputs.tag || github.ref_name }}"
+          releaseName: "Persei ${{ github.event.inputs.tag || github.ref_name }}"
           releaseBody: "See CHANGELOG.md."
           # A draft: this repository has immutable releases, and a published
           # release accepts no assets. The publish job publishes it, once

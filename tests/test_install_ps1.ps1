@@ -183,7 +183,7 @@ It 'says why when the icon is missing rather than failing the install' {
     Expect-True ($null -eq ($r | Where-Object { $_ -is [string] -and $_ -like '*.lnk' })) 'no shortcut path returned'
 }
 It 'the icon the installer points at ships with the checkout' {
-    Expect-True (Test-Path (Join-Path $PSScriptRoot '..' 'frontend' 'public' 'tektonix.ico')) 'frontend/public/tektonix.ico exists'
+    Expect-True (Test-Path (Join-Path $PSScriptRoot '..' 'frontend' 'public' 'persei.ico')) 'frontend/public/persei.ico exists'
 }
 
 if ($script:failed -gt 0) { Write-Host "$script:failed of $script:ran failed" -ForegroundColor Red; exit 1 }

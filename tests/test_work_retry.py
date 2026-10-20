@@ -252,4 +252,4 @@ async def test_an_empty_reply_is_asked_to_carry_on_rather_than_ending_the_pass(m
     result = await graph.ainvoke(state, config={"configurable": {"thread_id": "t1"}})
     assert agent.calls == 3 and result["escalated"] is False
     nudge = agent.inputs[1]["messages"][0]
-    assert isinstance(nudge, HumanMessage) and nudge.content.startswith("[Tektonix harness] Your last reply was empty")
+    assert isinstance(nudge, HumanMessage) and nudge.content.startswith("[Persei harness] Your last reply was empty")

@@ -1,4 +1,4 @@
-"""Everything Tektonix itself says to the model, or refuses it, is marked as
+"""Everything Persei itself says to the model, or refuses it, is marked as
 the harness; the operator's own words are marked as the operator's
 (agent/harness_voice.py). A trajectory is read by the operator, by
 leaderboard reviewers and by the model; none of them should have to guess."""

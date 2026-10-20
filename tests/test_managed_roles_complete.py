@@ -86,7 +86,7 @@ _NON_SEAT_ALIASES = {"embedder", "web-search"}
 def test_the_example_does_not_ship_another_product_s_aliases():
     """install.sh copies this file onto every fresh box. Other applications
     that happen to share a router on the maintainer's machine are not
-    Tektonix, and a visitor grepping the example should not find them."""
+    Persei, and a visitor grepping the example should not find them."""
     from pathlib import Path
 
     parsed = yaml.safe_load(Path("services/model-router/config.example.yaml").read_text())

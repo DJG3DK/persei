@@ -599,7 +599,7 @@ async def ship_as_pull_request(project: str, branch: str, sha: str, title: str) 
     try:
         pr = await github_repos.open_pull_request(
             token, slug, head=branch, base=base, title=title,
-            body=f"Opened by Tektonix for task branch `{branch}` at `{sha[:12]}`.\n\n"
+            body=f"Opened by Persei for task branch `{branch}` at `{sha[:12]}`.\n\n"
                  f"The automated review gate passed before this was opened.",
         )
     except (PermissionError, LookupError, ValueError, httpx.HTTPError) as e:

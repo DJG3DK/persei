@@ -44,7 +44,7 @@
 
 /* Status pill. NOT branding: SetupTotpPage and ChangePasswordPage use this
    for "Required", "2FA setup" and "2FA enabled". It stays exactly as it was
-   -- only LoginPage's five copies, which all read "Tektonix" and were
+   -- only LoginPage's five copies, which all read "Persei" and were
    standing in for the mark, became .login-mark below. */
 .login-badge {
   display: inline-block;

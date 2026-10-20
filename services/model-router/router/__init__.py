@@ -1,4 +1,4 @@
-"""Tektonix's own model router.
+"""Persei's own model router.
 
 Every deployment is `openrouter/...`, so the off-the-shelf proxy this
 replaced was a proxy in front of a proxy, and its headline feature --

@@ -3,7 +3,7 @@ import { memo, useState } from "react";
 import { modelColor, relativeTime, shortModel } from "../format";
 import { artifactImages, splitArtifactImages } from "../artifactImages";
 import type { LogEntry } from "../types";
-import { TektonixMark } from "./TektonixMark";
+import { PerseiMark } from "./PerseiMark";
 import "./ChatMessage.css";
 
 /**
@@ -350,7 +350,7 @@ function ChatMessageImpl({ entry, prevEntry }: { entry: LogEntry; prevEntry?: Lo
           products talking. */}
       {!sameSpeaker && (
         <div className="chat-avatar chat-avatar--mark">
-          <TektonixMark size={26} />
+          <PerseiMark size={26} />
         </div>
       )}
       <div className="chat-agent-col">

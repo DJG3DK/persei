@@ -22,7 +22,7 @@ describe("LandingPage", () => {
     // offer is to tell them when something ships.
     render(<LandingPage />);
     expect(screen.queryByRole("link", { name: /^sign in$/i })).not.toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/agent\.tektonix\.io/);
+    expect(document.body.textContent).not.toMatch(/agent\.perseiagent\.ai/);
     expect(screen.getByRole("link", { name: /get updates/i })).toHaveAttribute("href", "#newsletter");
   });
 
@@ -62,7 +62,7 @@ describe("LandingPage", () => {
 
   it("says who the newsletter comes from, and what is done with an address", () => {
     render(<LandingPage />);
-    expect(screen.getAllByRole("link", { name: /danny@tektonix\.io/ }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /danny@perseiagent\.ai/ }).length).toBeGreaterThan(0);
     // The signup form no longer promises an unsubscribe. Nothing has been sent
     // yet, so there is nothing to leave -- the promise belongs in the first
     // issue, which carries the link the stored token is minted for.
@@ -82,8 +82,8 @@ describe("LandingPage", () => {
     external.forEach((a) => {
       const href = a.getAttribute("href") ?? "";
       expect(
-        href === "https://github.com/DJG3DK/tektonix" ||
-          href.startsWith("https://github.com/DJG3DK/tektonix/"),
+        href === "https://github.com/DJG3DK/persei" ||
+          href.startsWith("https://github.com/DJG3DK/persei/"),
       ).toBe(true);
     });
   });
@@ -93,7 +93,7 @@ describe("LandingPage", () => {
     // this page would then offer an old one from the next release onwards.
     render(<LandingPage />);
     const download = screen.getByRole("link", { name: /download the latest release/i });
-    expect(download).toHaveAttribute("href", "https://github.com/DJG3DK/tektonix/releases/latest");
+    expect(download).toHaveAttribute("href", "https://github.com/DJG3DK/persei/releases/latest");
   });
 
   it("opens external links safely", () => {
@@ -170,7 +170,7 @@ describe("LandingPage — 0.9 install paths", () => {
     expect(appimage.length).toBe(2);
     appimage.forEach((a) => expect(a).toHaveAttribute("href", "/download/linux"));
     expect(screen.getByRole("link", { name: /\.deb for debian/i })).toHaveAttribute("href", "/download/linux-deb");
-    expect(document.body.textContent).toContain("curl -fsSL https://tektonix.io/install-linux.sh | sh");
+    expect(document.body.textContent).toContain("curl -fsSL https://perseiagent.ai/install-linux.sh | sh");
   });
 
   it("covers Windows and Linux, and is honest that there is no Mac build", () => {

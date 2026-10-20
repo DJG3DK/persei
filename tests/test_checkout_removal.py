@@ -2,7 +2,7 @@
 
 Removing a project has always left the live repository alone, and that is
 still the default. The gap this closes is the one case where it is wrong: a
-repository Tektonix cloned by itself -- usually because a stale list offered
+repository Persei cloned by itself -- usually because a stale list offered
 to add something already onboarded -- leaves a clone behind that only a shell
 can remove, which is a manual step inside a flow the dashboard otherwise owns
 end to end.

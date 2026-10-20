@@ -40,7 +40,7 @@ export const THEMES: Theme[] = [
   {
     id: 'orchid',
     label: 'Orchid',
-    blurb: 'Violet on a warm-dark ground. A callback to the pre-Tektonix look.',
+    blurb: 'Violet on a warm-dark ground. A callback to the original look.',
     swatch: ['#140f18', '#211a27', '#d879d8', '#f2ecf5'],
   },
   {

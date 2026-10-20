@@ -34,7 +34,7 @@ function loadWorker() {
     const clientsList = [];
     const self_ = {
         addEventListener: (name, fn) => { handlers[name] = fn; },
-        location: { origin: 'https://tektonix.io' },
+        location: { origin: 'https://perseiagent.ai' },
         registration: {
             showNotification: (title, opts) => { shown.push({ title, ...opts }); return Promise.resolve(); },
         },
@@ -101,21 +101,21 @@ test('a payload that is not JSON still notifies', async () => {
         data: { json: () => { throw new SyntaxError('not json'); }, text: () => 'something happened' },
     });
     assert.strictEqual(w.shown.length, 1);
-    assert.strictEqual(w.shown[0].title, 'Tektonix', 'falls back to the app name');
+    assert.strictEqual(w.shown[0].title, 'Persei', 'falls back to the app name');
 });
 
 test('a push with no data at all still notifies', async () => {
     const w = loadWorker();
     await fire(w.handlers, 'push', { data: null });
     assert.strictEqual(w.shown.length, 1);
-    assert.strictEqual(w.shown[0].title, 'Tektonix');
+    assert.strictEqual(w.shown[0].title, 'Persei');
 });
 
 test('clicking focuses a window that is already open', async () => {
     const w = loadWorker();
     let focused = false;
     w.clientsList.push({
-        url: 'https://tektonix.io/', focus() { focused = true; return Promise.resolve(this); },
+        url: 'https://perseiagent.ai/', focus() { focused = true; return Promise.resolve(this); },
     });
     let closed = false;
     await fire(w.handlers, 'notificationclick', {

@@ -271,7 +271,7 @@ export function ProjectsPanel({ onChanged }: { onChanged?: () => void | Promise<
                   <button
                     type="button"
                     className="wiz-existing-remove"
-                    aria-label={`Remove ${name} from Tektonix`}
+                    aria-label={`Remove ${name} from Persei`}
                     onClick={() => { setExpanded(name); setRemoving(name); }}
                   >
                     Remove

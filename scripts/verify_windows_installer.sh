@@ -17,7 +17,7 @@ set -euo pipefail
 ROOT_URL="https://www.microsoft.com/pkiops/certs/Microsoft%20Identity%20Verification%20Root%20Certificate%20Authority%202020.crt"
 # Microsoft Identity Verification Root Certificate Authority 2020, valid to 2045.
 ROOT_SHA256="53:67:F2:0C:7A:DE:0E:2B:CA:79:09:15:05:6D:08:6B:72:0C:33:C1:FA:2A:26:61:AC:F7:87:E3:29:2E:12:70"
-REPO="DJG3DK/tektonix"
+REPO="DJG3DK/persei"
 
 die() { echo "verify: $*" >&2; exit 1; }
 command -v osslsigncode >/dev/null || die "osslsigncode is not installed (apt install osslsigncode)"

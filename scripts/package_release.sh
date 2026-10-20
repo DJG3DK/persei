@@ -21,7 +21,7 @@ cd "$AGENT_HOME"
 VERSION="${1:-$(git describe --tags --always --dirty 2>/dev/null || date -u +%Y%m%dT%H%M%SZ)}"
 OUT_DIR="$AGENT_HOME/dist"
 STAGE="$(mktemp -d)"
-NAME="tektonix-$VERSION"   # the product's name; the old one predates it
+NAME="persei-$VERSION"   # the product's name (Tektonix before 0.9.4)
 trap 'rm -rf "$STAGE"' EXIT
 
 echo "packaging $NAME"
@@ -45,9 +45,9 @@ echo "  collecting tracked files"
 mkdir -p "$STAGE/$NAME"
 git archive --format=tar HEAD | tar -x -C "$STAGE/$NAME"
 
-# 2a. ...except site/, which is tektonix.io's public landing page. It is a
+# 2a. ...except site/, which is perseiagent.ai's public landing page. It is a
 # separate build with its own deps, it is marketing rather than product, and
-# an installation has no use for it -- somebody self-hosting Tektonix wants
+# an installation has no use for it -- somebody self-hosting Persei wants
 # the console, not a page selling it to them. Removed here rather than being
 # untracked, because it IS source that belongs in the repo.
 rm -rf "$STAGE/$NAME/site"

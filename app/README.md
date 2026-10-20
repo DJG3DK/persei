@@ -1,4 +1,4 @@
-# Tektonix desktop
+# Persei desktop
 
 The dashboard in a window, the compose stack under it, and a tray icon to
 reach both. A [Tauri 2](https://tauri.app) shell with one window and two

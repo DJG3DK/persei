@@ -1,11 +1,11 @@
-# Installing Tektonix
+# Installing Persei
 
-Tektonix is self-hosted: it runs on a machine you control, works on repos on
+Persei is self-hosted: it runs on a machine you control, works on repos on
 that machine, and talks to exactly one paid service (OpenRouter). This guide
 takes about 15 minutes, most of it waiting for dependencies.
 
 > **Clone it, don't fork it.** Forking is for sending changes back upstream. To
-> *run* Tektonix, clone it — every file that is specific to your deployment
+> *run* Persei, clone it — every file that is specific to your deployment
 > (`.env`, `projects.json`, `skills/local/`, the service overrides) is
 > gitignored, so `git pull` brings you updates without ever touching your
 > configuration.
@@ -38,10 +38,10 @@ suite passes on both, against a real Postgres. `install.sh` detects `apt`,
 
 Windows, macOS, or a one-command Docker install is a different path:
 [docker/README.md](docker/README.md). On Windows, the desktop app (the
-`Tektonix_<version>_x64-setup.exe` on each release) does it all in a window,
+`Persei_<version>_x64-setup.exe` on each release) does it all in a window,
 and on a Linux desktop so does the Linux app
-(`curl -fsSL https://tektonix.io/install-linux.sh | sh`);
-`Install Tektonix.bat` is the same bundle from a source checkout. The bundle
+(`curl -fsSL https://perseiagent.ai/install-linux.sh | sh`);
+`Install Persei.bat` is the same bundle from a source checkout. The bundle
 includes the review gate; deploying your app after a merge is the one thing
 it leaves to the host install.
 
@@ -50,8 +50,8 @@ it leaves to the host install.
 ## 2. Install
 
 ```bash
-git clone https://github.com/DJG3DK/tektonix.git
-cd tektonix
+git clone https://github.com/DJG3DK/persei.git
+cd persei
 ./install.sh
 ```
 
@@ -757,13 +757,13 @@ release tarball ships it already built:
 
 ```bash
 scripts/package_release.sh v0.5.0        # on a machine with Node
-# -> dist/tektonix-v0.5.0.tar.gz  +  .sha256
+# -> dist/persei-v0.5.0.tar.gz  +  .sha256
 ```
 
 On the server:
 
 ```bash
-tar -xzf tektonix-v0.5.0.tar.gz && cd tektonix-v0.5.0
+tar -xzf persei-v0.5.0.tar.gz && cd persei-v0.5.0
 ./install.sh          # finds frontend/dist and skips the Node build entirely
 ```
 

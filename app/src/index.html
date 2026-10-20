@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tektonix</title>
+  <title>Persei</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,7 +12,7 @@
   <header class="top" data-tauri-drag-region>
     <div class="brand" data-tauri-drag-region>
       <img src="logo.png" alt="" width="28" height="28" data-tauri-drag-region />
-      <span data-tauri-drag-region>Tektonix</span>
+      <span data-tauri-drag-region>Persei</span>
     </div>
     <div class="top-right" data-tauri-drag-region>
       <span id="stack-version" class="muted" data-tauri-drag-region></span>
@@ -20,7 +20,7 @@
       <span class="win-controls">
         <button id="win-min" class="win-btn" title="Minimise" aria-label="Minimise">&#x2500;</button>
         <button id="win-max" class="win-btn" title="Maximise" aria-label="Maximise">&#x25A1;</button>
-        <button id="win-close" class="win-btn win-btn--close" title="Close (the tray keeps Tektonix running)" aria-label="Close">&#x2715;</button>
+        <button id="win-close" class="win-btn win-btn--close" title="Close (the tray keeps Persei running)" aria-label="Close">&#x2715;</button>
       </span>
     </div>
   </header>
@@ -63,7 +63,7 @@
         <label>
           <span>Your email for commits</span>
           <input id="setup-git-email" type="email" spellcheck="false" placeholder="you@example.com" />
-          <small class="muted">The agent commits as you. Use the address your GitHub account knows, or its noreply one (ID+user@users.noreply.github.com). Blank: "Tektonix" and the sign-in email.</small>
+          <small class="muted">The agent commits as you. Use the address your GitHub account knows, or its noreply one (ID+user@users.noreply.github.com). Blank: "Persei" and the sign-in email.</small>
         </label>
         <label>
           <span>Sign-in email</span>
@@ -98,7 +98,7 @@
     <!-- Running / control -->
     <section id="page-stack" class="page hidden">
       <div class="status-head">
-        <h1 id="stack-title">Tektonix</h1>
+        <h1 id="stack-title">Persei</h1>
         <span id="stack-state" class="pill"></span>
       </div>
       <p id="stack-text" class="lead"></p>
@@ -115,8 +115,8 @@
         <label class="muted" for="close-action">Closing the window</label>
         <select id="close-action">
           <option value="ask">asks what to do</option>
-          <option value="tray">keeps Tektonix running in the tray</option>
-          <option value="quit">quits and stops Tektonix</option>
+          <option value="tray">keeps Persei running in the tray</option>
+          <option value="quit">quits and stops Persei</option>
         </select>
       </div>
       <div id="password-box" class="callout hidden">
@@ -128,7 +128,7 @@
       <p id="versions" class="muted"></p>
       <div class="row wrap">
         <button id="btn-check-stack" class="btn">Check for updates</button>
-        <button id="btn-update-stack" class="btn primary" disabled>Update Tektonix</button>
+        <button id="btn-update-stack" class="btn primary" disabled>Update Persei</button>
         <button id="btn-update-app" class="btn" disabled>Update this app</button>
         <label class="check inline"><input id="pre-inline" type="checkbox" /> <span>Include pre-releases</span></label>
       </div>

@@ -1,4 +1,4 @@
-# Tektonix
+# Persei
 
 An autonomous coding agent built on [LangGraph](https://langchain-ai.github.io/langgraph/) and
 [deepagents](https://github.com/langchain-ai/deepagents). It plans, executes, and verifies real
@@ -301,8 +301,8 @@ managed roles on the Models page.
 
 One React/Vite app (`frontend/`), served by the backend itself, at its own host. Signed out means
 the sign-in form. The public page is a separate build (`site/`) on its own host and is not part of
-an installation, since a self-hosted Tektonix has no use for a page selling it. On this deployment
-that is `agent.tektonix.io` for the console and `tektonix.io` for the page; your own install has
+an installation, since a self-hosted Persei has no use for a page selling it. On this deployment
+that is `agent.perseiagent.ai` for the console and `perseiagent.ai` for the page; your own install has
 whatever single host you point at it. Live task and planning output arrives over WebSockets, with a
 REST snapshot on every (re)connect — the socket only carries events from the moment it opens, so
 the snapshot is what makes a page opened mid-task show real history instead of starting blank.
@@ -331,7 +331,7 @@ first. The app lands on **Planning**, not the raw task composer.
   `/api` at all and serves the app shell network-first, falling back to a cached copy only when the
   box is genuinely unreachable. `tests/test_pwa.py` pins each of Chrome's installability criteria,
   because Chrome reports a failed one only in DevTools.
-- **Removing a project** — **Settings → Projects**, expand a project, *Remove from Tektonix*. The
+- **Removing a project** — **Settings → Projects**, expand a project, *Remove from Persei*. The
   agent forgets it: the worktree it built in, the deploy key it minted, its configuration entry and
   its memory. **The live repository is never touched** — not a file, not a branch the agent pushed,
   not the remote. The one thing changed inside it is `core.sshCommand`, unset because the agent set
@@ -724,8 +724,8 @@ lifecycle.
 ## Running it
 
 ```bash
-git clone https://github.com/DJG3DK/tektonix.git
-cd tektonix
+git clone https://github.com/DJG3DK/persei.git
+cd persei
 ./install.sh
 ```
 
@@ -740,14 +740,14 @@ OpenRouter API key, which is the only paid dependency. The installer offers to i
 it finds missing, using your system package manager. It always asks first, the answer defaults to
 no, and `--yes` on its own is not taken as permission.
 
-On Windows, install the desktop app: the `Tektonix_<version>_x64-setup.exe`
-attached to each [release](https://github.com/DJG3DK/tektonix/releases). It
+On Windows, install the desktop app: the `Persei_<version>_x64-setup.exe`
+attached to each [release](https://github.com/DJG3DK/persei/releases). It
 installs Docker Desktop if it is missing, asks for your settings in a window,
 pulls the release's images and keeps them updated ([app/README.md](app/README.md)).
-On a Linux desktop, `curl -fsSL https://tektonix.io/install-linux.sh | sh`
+On a Linux desktop, `curl -fsSL https://perseiagent.ai/install-linux.sh | sh`
 installs the same app (or grab the AppImage or .deb from the release). It sets
 up Docker if it's missing and adds itself to your app menu.
-`Install Tektonix.bat` and `install.ps1` still work for a source checkout
+`Install Persei.bat` and `install.ps1` still work for a source checkout
 ([docker/README.md](docker/README.md)). The bundle includes the review gate;
 what it cannot do is restart your app after a merge, because pm2 runs on the
 host.

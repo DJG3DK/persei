@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "tektonix.io \u2014 the public landing page. Built and deployed separately from the agent; see site/README.md.",
+  "description": "perseiagent.ai \u2014 the public landing page. Built and deployed separately from the agent; see site/README.md.",
   "scripts": {
     "build": "tsc -b && vite build && node scripts/render.mjs",
     "dev": "vite",
@@ -28,6 +28,6 @@
     "vite": "^8.3.1",
     "vitest": "^5.0.2"
   },
-  "author": "Danny <danny@tektonix.io>",
-  "homepage": "https://tektonix.io"
+  "author": "Danny <danny@perseiagent.ai>",
+  "homepage": "https://perseiagent.ai"
 }

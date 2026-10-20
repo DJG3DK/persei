@@ -1,5 +1,5 @@
 // pm2 for the newsletter signup. Its own file, not the agent's
-// ecosystem.config.js, because this belongs to tektonix.io rather than to the
+// ecosystem.config.js, because this belongs to perseiagent.ai rather than to the
 // product -- the same line site/ is on the other side of everywhere else.
 //
 //   pm2 start site/server/ecosystem.config.cjs && pm2 save
@@ -20,7 +20,7 @@ module.exports = {
       env: {
         // Falls back to the agent's database, which is what the box already
         // backs up (docs/backup.md). Its table is its own.
-        SITE_URL: 'https://tektonix.io',
+        SITE_URL: 'https://perseiagent.ai',
         NEWSLETTER_PORT: '8300',
       },
     },

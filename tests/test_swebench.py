@@ -393,7 +393,7 @@ def test_searching_for_the_published_fix_is_refused_on_a_benchmark(cmd):
     fix's own pull request."""
     from agent.tools.benchmark_guard import refusal, screen
     msg = refusal(cmd)
-    assert msg and msg.startswith("[Tektonix harness] REFUSED on a benchmark task") and "does not exist anywhere" in msg
+    assert msg and msg.startswith("[Persei harness] REFUSED on a benchmark task") and "does not exist anywhere" in msg
     assert screen(cmd) == (None, msg), "nothing of it runs"
 
 
@@ -435,7 +435,7 @@ def test_only_the_hunting_half_of_a_compound_command_is_refused(cmd, remaining, 
     from agent.tools.benchmark_guard import screen
     run, note = screen(cmd)
     assert run == remaining
-    assert note.startswith("[Tektonix harness] REFUSED part of that command on a benchmark task: `" + dropped + "`")
+    assert note.startswith("[Persei harness] REFUSED part of that command on a benchmark task: `" + dropped + "`")
     assert "does not exist anywhere" in note and "The rest of the command ran" in note
 
 
@@ -484,12 +484,12 @@ def test_only_a_benchmark_s_bash_carries_the_guard(tmp_path, monkeypatch):
     ran.clear()
     out = asyncio.run(_bash(tmp_path / "bench", monkeypatch, ran, benchmark=True).ainvoke({"command": hunt}))
     assert ran == ['grep -rn "has_key" django/'], "the legitimate half ran"
-    assert out.startswith("[Tektonix harness] REFUSED part of that command") and "\nexit_code=0\nok" in out
+    assert out.startswith("[Persei harness] REFUSED part of that command") and "\nexit_code=0\nok" in out
     assert bash_advice.kind_of_result(out) == "benchmark-refused", "the work node's telemetry can see it"
 
     ran.clear()
     out = asyncio.run(_bash(tmp_path / "bench", monkeypatch, ran, benchmark=True).ainvoke({"command": "git fsck"}))
-    assert ran == [] and out.startswith("[Tektonix harness] REFUSED on a benchmark task")
+    assert ran == [] and out.startswith("[Persei harness] REFUSED on a benchmark task")
     assert bash_advice.kind_of_result(out) == "benchmark-refused"
 
 
@@ -597,7 +597,7 @@ async def test_an_edit_that_changes_nothing_is_refused(tmp_path):
     tools, _ = make_agent_tools(str(tmp_path))
     edit = {t.name: t for t in tools}["edit"]
     out = await edit.ainvoke({"path": "a.py", "old_string": "x = 1", "new_string": "x = 1"})
-    assert out.startswith("[Tektonix harness] ERROR: old_string and new_string are identical")
+    assert out.startswith("[Persei harness] ERROR: old_string and new_string are identical")
 
 
 def test_grading_retries_the_harness_s_image_listing_race(tmp_path, monkeypatch):

@@ -52,7 +52,7 @@ class RemoveProjectRequest(BaseModel):
     # What to do with everything the agent LEARNED about this project.
     memory: Literal["archive", "delete"] = "archive"
     # And what to do with the checkout. `keep` is the default and the rule the
-    # removal module is built around; `delete` is for a repository Tektonix
+    # removal module is built around; `delete` is for a repository Persei
     # cloned by itself and the operator never wanted, and is refused unless
     # the server can show that nothing would be lost by it.
     files: Literal["keep", "delete"] = "keep"
@@ -171,7 +171,7 @@ async def remove_project_endpoint(request: Request, name: str, req: RemoveProjec
 
     What this does NOT do is the important half: the live repository is left
     exactly as it is -- every file, every branch the agent ever pushed to it,
-    and its remote. Removing a project means Tektonix forgets it, not that
+    and its remote. Removing a project means Persei forgets it, not that
     anybody's code goes away. The only thing touched inside the live repo is
     `core.sshCommand`, which is unset because the agent set it when it minted
     the deploy key, and leaving it would point the operator's own git at a key

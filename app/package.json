@@ -2,7 +2,7 @@
   "name": "tektonix-desktop",
   "version": "0.9.0",
   "private": true,
-  "description": "Tektonix desktop: the dashboard in a window, the stack under it",
+  "description": "Persei desktop: the dashboard in a window, the stack under it",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",

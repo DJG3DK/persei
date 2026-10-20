@@ -6,7 +6,7 @@
  * already knowing. Someone who had just added the wrong repository could see
  * it sitting in the list with no way to take it back off.
  *
- * And the second half: a repository Tektonix cloned by itself leaves a clone
+ * And the second half: a repository Persei cloned by itself leaves a clone
  * behind that removal used to have no way to delete, so finishing the job
  * meant a shell.
  */

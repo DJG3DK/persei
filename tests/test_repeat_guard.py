@@ -35,9 +35,9 @@ async def test_third_identical_call_is_served_from_cache_and_fourth_refused():
     assert h.calls == 2 and r1.content == r2.content == "same output"
     r3 = await mw.awrap_tool_call(_req("bash", {"command": "grep x"}, 3), h)
     assert h.calls == 2, "the third identical call must not execute"
-    assert r3.status == "error" and r3.content.startswith("[Tektonix harness] REPEATED CALL") and "same output" in r3.content
+    assert r3.status == "error" and r3.content.startswith("[Persei harness] REPEATED CALL") and "same output" in r3.content
     r4 = await mw.awrap_tool_call(_req("bash", {"command": "grep x"}, 4), h)
-    assert h.calls == 2 and r4.content.startswith("[Tektonix harness] ERROR:") and "loop" in r4.content
+    assert h.calls == 2 and r4.content.startswith("[Persei harness] ERROR:") and "loop" in r4.content
 
 
 async def test_a_call_whose_result_changes_is_never_blocked():
@@ -78,7 +78,7 @@ def test_sync_path_matches_async_semantics():
 
     for i in range(3):
         r = mw.wrap_tool_call(_req("read", {"path": "a.js"}, i), handler)
-    assert calls["n"] == 2 and r.content.startswith("[Tektonix harness] REPEATED CALL")
+    assert calls["n"] == 2 and r.content.startswith("[Persei harness] REPEATED CALL")
 
 
 def test_guard_is_attached_to_every_build_seat_and_to_planning():
@@ -118,7 +118,7 @@ async def test_a_contained_subagent_that_loops_is_ended_with_a_report():
         raise AssertionError("the model is not called once the subagent is stopped")
     resp = await g.awrap_model_call(object(), model_must_not_run)
     msg = resp.result[0]
-    assert msg.content.startswith("[Tektonix harness] This subagent was stopped") and not msg.tool_calls
+    assert msg.content.startswith("[Persei harness] This subagent was stopped") and not msg.tool_calls
     with pytest.raises(Exception, match="stuck in a tool loop"):
         coord = RepeatCallGuardMiddleware()
         for i in range(REFUSED_AT + BREAK_AT):
@@ -136,7 +136,7 @@ def test_different_calls_with_the_same_long_output_are_a_loop_too():
         return g.wrap_tool_call(_req("bash", {"command": f"python probe_c{i}.py"}, i),
                                 lambda r: ToolMessage(content=out, tool_call_id=r.tool_call["id"]))
     results = [run(i) for i in range(SAME_OUTPUT_AT)]
-    assert "[Tektonix harness] The last" not in results[SAME_OUTPUT_AT - 2].content
+    assert "[Persei harness] The last" not in results[SAME_OUTPUT_AT - 2].content
     assert f"The last {SAME_OUTPUT_AT} calls, each with different arguments" in results[-1].content
     short = RepeatCallGuardMiddleware()
     for i in range(20):
@@ -155,7 +155,7 @@ async def test_output_noise_does_not_hide_a_repeat():
     for i in range(1, 3):
         await mw.awrap_tool_call(_req("bash", {"command": "pytest -x"}, i), h)
     r3 = await mw.awrap_tool_call(_req("bash", {"command": "pytest -x"}, 3), h)
-    assert h.calls == 2 and r3.content.startswith("[Tektonix harness] REPEATED CALL")
+    assert h.calls == 2 and r3.content.startswith("[Persei harness] REPEATED CALL")
     assert "3rd identical" in r3.content, "and the ordinal is spelled right"
 
 

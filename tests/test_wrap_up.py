@@ -21,12 +21,12 @@ def test_warnings_fire_on_crossing_not_equality():
     """Two parallel calls per turn: 25 -> 27 skipped the 26 warning."""
     mw = WrapUpMiddleware(limit=30)
     outs = [_run(mw, i) for i in range(1, 26)]
-    assert [i + 1 for i, c in enumerate(outs) if "[Tektonix harness]" in c] == [20]
+    assert [i + 1 for i, c in enumerate(outs) if "[Persei harness]" in c] == [20]
     # a turn with two calls lands on 27, past the 26 threshold
     mw.calls = 26
     out = _run(mw, 27)
     assert "27 of your 30 tool calls used" in out and "Send your report NOW" in out
-    assert "[Tektonix harness]" not in _run(mw, 28), "each threshold fires once"
+    assert "[Persei harness]" not in _run(mw, 28), "each threshold fires once"
 
 
 def test_counts_reset_per_invocation():
@@ -38,7 +38,7 @@ def test_counts_reset_per_invocation():
     mw.before_agent({}, None)
     assert mw.calls == 0 and not mw._fired
     outs = [_run(mw, i) for i in range(20)]
-    assert "[Tektonix harness]" not in "".join(outs[:19]) and "20 of your 30" in outs[19]
+    assert "[Persei harness]" not in "".join(outs[:19]) and "20 of your 30" in outs[19]
 
 
 class _Req:
@@ -69,7 +69,7 @@ async def test_the_last_model_call_carries_no_tools_and_the_note():
     final = seen[-1]
     assert final.tools == []
     assert len(final.messages) == 3 and isinstance(final.messages[-1], HumanMessage)
-    assert final.messages[-1].content.startswith("[Tektonix harness] No more tool calls are available")
+    assert final.messages[-1].content.startswith("[Persei harness] No more tool calls are available")
     assert "VERDICT" in final.messages[-1].content
     mw.calls = 31  # past the cap (a parallel batch): still forced to text
     mw.wrap_model_call(_Req([HumanMessage("go")], tools), lambda r: seen.append(r))

@@ -110,14 +110,14 @@ async def lifespan(app: FastAPI):
     # difference between a 200ms call and a 700ms one at this volume.
     app.state.http = httpx.AsyncClient(
         limits=httpx.Limits(max_connections=100, max_keepalive_connections=40),
-        headers={"HTTP-Referer": "https://tektonix.io", "X-Title": "Tektonix"},
+        headers={"HTTP-Referer": "https://perseiagent.ai", "X-Title": "Persei"},
     )
     logger.info("model-router up: %d deployments", len(registry.table.deployments))
     yield
     await app.state.http.aclose()
 
 
-app = FastAPI(title="Tektonix model router", lifespan=lifespan)
+app = FastAPI(title="Persei model router", lifespan=lifespan)
 
 
 def _authorise(authorization: str | None) -> str:

@@ -18,16 +18,16 @@ pytestmark = pytest.mark.skipif(
 STUB = '#!/bin/sh\nprintf "%s\\n" "$*" > "$HOME/stub-ran-with"\n'
 
 
-def _release(tmp: Path, *, name="Tektonix_0.9.2_amd64.AppImage", body=STUB, digest=None, url=None,
+def _release(tmp: Path, *, name="Persei_0.9.2_amd64.AppImage", body=STUB, digest=None, url=None,
              compact=False, notes=""):
     api = tmp / "api"
     (api / "tags").mkdir(parents=True)
     asset = tmp / name
     asset.write_text(body)
     sha = digest if digest is not None else hashlib.sha256(body.encode()).hexdigest()
-    release = {"tag_name": "v0.9.2", "name": "Tektonix v0.9.2", "body": notes, "assets": [
+    release = {"tag_name": "v0.9.2", "name": "Persei v0.9.2", "body": notes, "assets": [
         {"name": "latest.json", "digest": "sha256:" + "0" * 64,
-         "browser_download_url": "https://github.com/DJG3DK/tektonix/releases/download/v0.9.2/latest.json"},
+         "browser_download_url": "https://github.com/DJG3DK/persei/releases/download/v0.9.2/latest.json"},
         {"name": name, "uploader": {"login": "github-actions[bot]", "url": "https://api.github.com/x"},
          "digest": f"sha256:{sha}", "browser_download_url": url or f"file://{asset}"},
     ]}
@@ -68,12 +68,12 @@ def test_a_download_that_does_not_match_githubs_checksum_is_not_installed(tmp_pa
 
 
 def test_a_release_without_the_linux_app_says_so(tmp_path):
-    r, _ = _run(tmp_path, _release(tmp_path, name="Tektonix_0.9.2_x64-setup.exe"))
+    r, _ = _run(tmp_path, _release(tmp_path, name="Persei_0.9.2_x64-setup.exe"))
     assert r.returncode == 1 and "has no Linux app" in r.stderr
 
 
 def test_only_this_repositorys_release_downloads_are_fetched(tmp_path):
-    r, home = _run(tmp_path, _release(tmp_path, url="https://evil.example/Tektonix_0.9.2_amd64.AppImage"))
+    r, home = _run(tmp_path, _release(tmp_path, url="https://evil.example/Persei_0.9.2_amd64.AppImage"))
     assert r.returncode == 1 and "unexpected download address" in r.stderr
     assert not (home / "stub-ran-with").exists()
 
@@ -92,7 +92,7 @@ def test_one_line_json_installs_too(tmp_path):
 
 
 def test_release_notes_cannot_pose_as_an_asset(tmp_path):
-    notes = 'Get "name": "Tektonix_9.9.9_amd64.AppImage", "browser_download_url": "https://evil.example/x"'
+    notes = 'Get "name": "Persei_9.9.9_amd64.AppImage", "browser_download_url": "https://evil.example/x"'
     r, home = _run(tmp_path, _release(tmp_path, compact=True, notes=notes))
     assert r.returncode == 0, r.stderr
     assert (home / ".local/share/io.tektonix.desktop/Tektonix.AppImage").read_text() == STUB

@@ -1,14 +1,14 @@
-# tektonix.io — the public landing page
+# perseiagent.ai — the public landing page
 
 Separate from the console on purpose. This is what a visitor sees; the console
 is its own build at [`../frontend`](../frontend) on its own host
-(`agent.tektonix.io`). They were one document until 2026-09-17, which is why
+(`agent.perseiagent.ai`). They were one document until 2026-09-17, which is why
 the product's marketing copy used to sit in front of a password box and ship
 with every installation of the agent.
 
 Two things follow from the split:
 
-* **It is not part of Tektonix.** `scripts/package_release.sh` deletes `site/`
+* **It is not part of Persei.** `scripts/package_release.sh` deletes `site/`
   from the tarball, and `install.sh` never looks at it. Somebody self-hosting
   the agent gets the console; they have no use for a page selling it to them.
 * **It ships no JavaScript.** The controls are links and a plain HTML form, and

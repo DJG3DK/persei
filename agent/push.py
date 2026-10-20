@@ -2,7 +2,7 @@
 
 Why this exists alongside agent/notify.py rather than inside it: Telegram is a
 third party the operator has to set up an account and a bot for, and it does
-not exist on a locked phone as "the Tektonix app said something". Web push
+not exist on a locked phone as "the Persei app said something". Web push
 does -- an installed PWA (see frontend/public/sw.js) gets a system
 notification with the app's own icon, on Android and on iOS 16.4+.
 
@@ -49,7 +49,7 @@ VAPID_FILE: Path = KEYS_DIR / "vapid.json"
 # Where a push service should complain to about our sends. Not a real mailbox
 # on most installs, which is fine and expected -- the RFC wants a stable
 # contact, not a monitored one.
-VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT") or "mailto:admin@tektonix.io"
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT") or "mailto:admin@perseiagent.ai"
 
 # Push services reject anything large; keep well under the 4KB ceiling.
 _MAX_BODY = 480

@@ -1,203 +1,227 @@
-"""Generate every Tektonix brand asset from one geometry definition.
+"""Generate every Persei brand image from one geometry definition.
 
-Mark: 09 PLUMB -- a plumb line. The bar and cord in bone, the bob in brass.
-A plumb line is the oldest instrument for deciding whether a thing is true,
-which is the job, and it contains a T for free.
+The mark (2026-10-20): the Perseus constellation in gold on navy, with a gold
+diamond P as one of its stars. Two forms, by size:
 
-Palette: DRAFTING. Brass #C9A227 on blue-graphite. Every foreground here was
-measured against --surface #1B2028 and clears 4.5:1 (see theme.css).
+* the constellation tile -- the app icon, the home-screen icons, anything
+  128px and up;
+* the gem tile (the diamond P alone, enlarged) -- favicons, the tray, and
+  every icon under 128px, where the constellation's stars shrink to dust.
 
-Everything is drawn at SS x and downsampled with LANCZOS -- ImageDraw is
-hard-aliased, and a logo with jagged diagonals is worse than no logo.
+The wordmark is PERSEI set in Jost Medium and turned into outlines
+(persei-wordmark.svg), so nothing here needs the font.
+
+Geometry is in persei.py. Rasterising is Chromium's (Playwright), which
+anti-aliases SVG properly; PIL then writes the .ico, .icns and .bmp files.
+
+    python scripts/brand/build_assets.py          # writes into the repo
+    python scripts/brand/build_assets.py OUT_DIR  # everything into one folder
 """
 
 from __future__ import annotations
 
+import asyncio
+import io
 import pathlib
+import re
 import sys
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
-OUT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else ".")
-SS = 4
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+import persei as P  # noqa: E402
 
-BG = (0x11, 0x15, 0x1A, 255)
-SURFACE = (0x1B, 0x20, 0x28, 255)
-BORDER = (0x34, 0x3C, 0x48, 255)
-TEXT = (0xED, 0xF0, 0xF4, 255)
-DIM = (0xA3, 0xAD, 0xBB, 255)
-BRASS = (0xC9, 0xA2, 0x27, 255)
-CLEAR = (0, 0, 0, 0)
+HERE = pathlib.Path(__file__).parent
+REPO = HERE.parent.parent
+ONE_DIR = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else None
 
-BLACK = "/usr/share/fonts/truetype/lato/Lato-Black.ttf"
-BOLD = "/usr/share/fonts/truetype/lato/Lato-Bold.ttf"
-REG = "/usr/share/fonts/truetype/lato/Lato-Regular.ttf"
-MONO = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+INK = "#E8ECF5"        # the wordmark on dark grounds
+SUBTLE = "#8C9AB8"
 
-# ── the mark, in a 64x64 unit box ───────────────────────────────────────────
-BAR = [(18, 8), (46, 8), (46, 16), (18, 16)]      # the fixing point
-CORD = [(29.5, 16), (34.5, 16), (34.5, 38), (29.5, 38)]
-BOB = [(24, 38), (40, 38), (32, 58)]               # the only part that moves
+_WORD = HERE / "persei-wordmark.svg"
+_WORD_VB = [float(v) for v in re.search(r'viewBox="([^"]+)"', _WORD.read_text()).group(1).split()]
+_WORD_D = re.search(r' d="([^"]+)"', _WORD.read_text()).group(1)
 
 
-def plumb(d, ox, oy, size, stem=TEXT, bob=BRASS):
-    k = size / 64.0
-    for pts, col in ((BAR, stem), (CORD, stem), (BOB, bob)):
-        d.polygon([(ox + x * k, oy + y * k) for x, y in pts], fill=col)
+def _svg(body: str, w: float, h: float) -> str:
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w:g} {h:g}" '
+            f'width="{w:g}" height="{h:g}">{body}</svg>')
 
 
-def _new(w, h, bg=CLEAR):
-    img = Image.new("RGBA", (w * SS, h * SS), bg)
-    return img, ImageDraw.Draw(img)
+def wordmark(x: float, y: float, cap: float, fill: str = INK) -> str:
+    """PERSEI with its cap height `cap`, top-left at (x, y)."""
+    k = cap / _WORD_VB[3]
+    return f'<path transform="translate({x:.2f} {y:.2f}) scale({k:.4f})" d="{_WORD_D}" fill="{fill}"/>'
 
 
-def _save(img, w, h, path, rgb=False):
-    out = img.resize((w, h), Image.LANCZOS)
-    if rgb:
-        out = out.convert("RGB")
-    out.save(path)
-    print(f"  {path.name:<26} {w}x{h}")
+def wordmark_width(cap: float) -> float:
+    return _WORD_VB[2] * cap / _WORD_VB[3]
 
 
-# ── 1. the lockup, for the sidebar and the landing page ─────────────────────
-def lockup(path, pad_ratio=0.16):
-    """Replaces 3d-agent-logo.png. Composed on an oversized canvas, then
-    cropped to the actual ink and padded evenly -- hand-placed coordinates
-    gave 68px of left margin against 16px of right, which reads as a mistake
-    at any size. The CSS is `height: 30px; width: auto`, so the exact pixel
-    ratio does not matter; the balance does."""
-    W, H = 1400, 400
-    img, d = _new(W, H)
-    mark = 210
-    plumb(d, 40 * SS, ((H - mark) // 2) * SS, mark * SS)
-    f = ImageFont.truetype(BLACK, 150 * SS)
-    box = d.textbbox((0, 0), "Tektonix", font=f)
-    d.text((272 * SS, (H * SS - (box[3] - box[1])) / 2 - box[1]),
-           "Tektonix", font=f, fill=TEXT)
+# ── the pieces ───────────────────────────────────────────────────────────────
 
-    ink = img.getbbox()
-    pad = int((ink[3] - ink[1]) * pad_ratio)
-    img = img.crop((ink[0] - pad, ink[1] - pad, ink[2] + pad, ink[3] + pad))
-    w, h = img.width // SS, img.height // SS
-    _save(img, w, h, path)
+def app_tile(full_bleed: bool = False) -> str:
+    """The constellation tile. full_bleed: square corners and the art inside
+    the 80% safe zone, for maskable icons that the OS crops itself."""
+    bg = (f'<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">'
+          f'<stop offset="0" stop-color="{P.NAVY_HI}"/><stop offset="1" stop-color="{P.NAVY}"/>'
+          f'</linearGradient></defs>'
+          f'<rect width="1024" height="1024" rx="{0 if full_bleed else 196}" fill="url(#bg)"/>')
+    art = P.constellation() + P.mark(*P.P_DIAMOND, 53.5)
+    if full_bleed:
+        art = f'<g transform="translate(512 512) scale(0.8) translate(-512 -512)">{art}</g>'
+    return _svg(bg + art, 1024, 1024)
 
 
-# ── 2. favicons ─────────────────────────────────────────────────────────────
-def icon(path, px, ground=SURFACE, radius=0.18):
-    """Solid ground on purpose. The mark's cord and bar are light, so a
-    transparent favicon disappears against a light browser tab; a filled tile
-    is legible in either tab theme."""
-    img, d = _new(px, px, CLEAR)
-    r = int(px * radius) * SS
-    d.rounded_rectangle([0, 0, px * SS - 1, px * SS - 1], radius=r, fill=ground)
-    inset = px * 0.16
-    plumb(d, inset * SS, inset * SS, (px - 2 * inset) * SS)
-    _save(img, px, px, path)
+def gem_tile() -> str:
+    return _svg(f'<rect width="1024" height="1024" rx="190" fill="{P.NAVY}"/>' + P.mark(512, 512, 372), 1024, 1024)
 
 
-def ico(path, sizes=(16, 32, 48)):
-    """One .ico carrying several real renders -- Windows and some browsers
-    pick the nearest, and a single upscaled 16px looks like mud at 48."""
-    frames = []
-    for px in sizes:
-        img, d = _new(px, px, CLEAR)
-        r = int(px * 0.18) * SS
-        d.rounded_rectangle([0, 0, px * SS - 1, px * SS - 1], radius=r, fill=SURFACE)
-        inset = px * 0.16
-        plumb(d, inset * SS, inset * SS, (px - 2 * inset) * SS)
-        frames.append(img.resize((px, px), Image.LANCZOS))
-    # Largest first: Pillow drops every size larger than the first frame, so a
-    # 16px first frame made a one-frame .ico whatever `sizes` said.
-    frames.sort(key=lambda f: f.width, reverse=True)
-    frames[0].save(path, format="ICO", sizes=[(f.width, f.height) for f in frames],
-                   append_images=frames[1:])
-    print(f"  {path.name:<26} {list(sizes)}")
+def lockup() -> str:
+    """Gem beside PERSEI, on transparent, for the dashboard and the landing
+    page (both dark)."""
+    half, cap, gap, pad = 60, 58, 44, 8
+    w = pad + 2 * half + gap + wordmark_width(cap) + pad
+    h = 2 * half + 2 * pad
+    body = P.mark(pad + half, h / 2, half) + wordmark(pad + 2 * half + gap, h / 2 - cap / 2, cap)
+    return _svg(body, round(w), h)
 
 
-def apple_touch(path, px=180):
-    """iOS composites onto white if there is any alpha and applies its own
-    corner mask, so this one is full-bleed and fully opaque."""
-    img, d = _new(px, px, SURFACE)
-    plumb(d, px * 0.2 * SS, px * 0.16 * SS, px * 0.6 * SS)
-    _save(img, px, px, path)
+def installer_header() -> str:
+    """NSIS header, 150x57, on the white of the installer's top band."""
+    return _svg('<rect width="150" height="57" fill="#FFFFFF"/>' + P.mark(124, 28.5, 19, ink=P.NAVY), 150, 57)
 
 
-def pwa_icon(path, px, maskable=False):
-    """The installed-app icon, for the web app manifest.
-
-    Two shapes, because Android draws them differently. `any` is the tile as
-    it ships -- rounded, the mark at the same 0.16 inset as the favicons.
-    `maskable` is full-bleed and keeps every drawn pixel inside the safe
-    zone: Android crops an adaptive icon to whatever mask the launcher uses
-    (circle, squircle, teardrop), guaranteeing only the middle 80% survives.
-    A rounded tile handed to that crop loses its own corners and reads as a
-    dark blob, which is what "why is my app icon a grey circle" always is.
-    """
-    ground = SURFACE
-    img, d = _new(px, px, ground if maskable else CLEAR)
-    if not maskable:
-        r = int(px * 0.18) * SS
-        d.rounded_rectangle([0, 0, px * SS - 1, px * SS - 1], radius=r, fill=ground)
-    # 0.16 of the tile normally; 0.26 for maskable, which keeps the mark
-    # inside the 80%-diameter circle every launcher mask is guaranteed to
-    # leave alone.
-    inset = px * (0.26 if maskable else 0.16)
-    plumb(d, inset * SS, inset * SS, (px - 2 * inset) * SS)
-    _save(img, px, px, path)
+def installer_sidebar() -> str:
+    """NSIS welcome/finish sidebar, 164x314: the constellation, the name."""
+    w, h = 164, 314
+    k = 0.2
+    art = (f'<g transform="translate({w / 2 - 512 * k:.1f} 18) scale({k})">'
+           f'{P.constellation(width=7)}{P.mark(*P.P_DIAMOND, 60)}</g>')
+    cap = 13
+    word = wordmark(w / 2 - wordmark_width(cap) / 2, 236, cap)
+    rule = f'<rect x="{w / 2 - 18}" y="266" width="36" height="2" rx="1" fill="{P.GOLD}"/>'
+    return _svg(f'<rect width="{w}" height="{h}" fill="{P.NAVY}"/>' + art + word + rule, w, h)
 
 
-# ── 3. the display card ─────────────────────────────────────────────────────
-def og_card(path, w=1200, h=630):
-    """What a link to tektonix.io unfurls as in Slack, iMessage, X."""
-    img, d = _new(w, h, BG)
-    s = lambda v: int(v * SS)  # noqa: E731
+def og_card() -> str:
+    """The link preview, 1200x630, as a page (it has real text in it)."""
+    k = 0.52
+    art = (f'<svg viewBox="0 0 1024 1024" width="{1024 * k:.0f}" height="{1024 * k:.0f}" '
+           f'style="position:absolute;right:40px;top:50px">'
+           f'{P.constellation(width=5)}{P.mark(*P.P_DIAMOND, 56)}</svg>')
+    lock = re.sub(r'width="[\d.]+" height="[\d.]+"', 'height="78"', lockup(), count=1)
+    return f"""<!doctype html><meta charset="utf-8"><style>
+html,body{{margin:0;width:1200px;height:630px;overflow:hidden}}
+body{{background:radial-gradient(120% 90% at 78% 30%,{P.NAVY_HI} 0%,{P.NAVY} 60%,#080F1D 100%);
+  font-family:Lato,"DejaVu Sans",sans-serif;color:{INK};position:relative}}
+.lock{{position:absolute;left:84px;top:84px}}
+h1{{position:absolute;left:92px;top:250px;margin:0;font-size:52px;line-height:1.18;font-weight:700;width:640px}}
+h1 em{{font-style:normal;color:{P.GOLD}}}
+p{{position:absolute;left:92px;top:396px;margin:0;font-size:26px;line-height:1.5;color:#A9B4CC;width:600px}}
+.foot{{position:absolute;left:92px;right:92px;bottom:58px;border-top:1px solid #23314F;padding-top:22px;
+  display:flex;justify-content:space-between;font:22px "DejaVu Sans Mono",monospace;letter-spacing:.06em}}
+.foot span:first-child{{color:{SUBTLE}}} .foot span:last-child{{color:{P.GOLD}}}
+</style><body><div class="lock">{lock}</div>{art}
+<h1>An autonomous coding agent <em>that ships.</em></h1>
+<p>Plans the work, writes the code, runs your real test suite, and passes an independent review gate before anything merges.</p>
+<div class="foot"><span>PLAN · BUILD · VERIFY · REVIEW · SHIP</span><span>perseiagent.ai</span></div></body>"""
 
-    # a faint drafting grid -- the subject's own paper
-    for x in range(0, w, 40):
-        d.line([(s(x), 0), (s(x), s(h))], fill=(0x18, 0x1D, 0x24, 255), width=SS)
-    for y in range(0, h, 40):
-        d.line([(0, s(y)), (s(w), s(y))], fill=(0x18, 0x1D, 0x24, 255), width=SS)
 
-    # the plumb line, dropped the full height of the card, brass bob resting
-    d.rectangle([s(975), 0, s(981), s(300)], fill=(0x2A, 0x31, 0x3C, 255))
-    plumb(d, s(930), s(260), s(190))
+# ── rasterising ──────────────────────────────────────────────────────────────
 
-    plumb(d, s(92), s(86), s(104))
-    f_word = ImageFont.truetype(BLACK, s(76))
-    d.text((s(214), s(96)), "Tektonix", font=f_word, fill=TEXT)
+async def _render(jobs: list[tuple[str, int, int]]) -> list[Image.Image]:
+    from playwright.async_api import async_playwright
+    out = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        for markup, w, h in jobs:
+            await page.set_viewport_size({"width": w, "height": h})
+            if markup.lstrip().startswith("<svg"):
+                markup = re.sub(r'width="[\d.]+" height="[\d.]+"', f'width="{w}" height="{h}"', markup, count=1)
+                markup = ('<!doctype html><style>html,body{margin:0;background:transparent}'
+                          'svg{display:block}</style>' + markup)
+            await page.set_content(markup)
+            png = await page.screenshot(omit_background=True, clip={"x": 0, "y": 0, "width": w, "height": h})
+            out.append(Image.open(io.BytesIO(png)).convert("RGBA"))
+        await browser.close()
+    return out
 
-    f_h = ImageFont.truetype(BOLD, s(44))
-    d.text((s(92), s(268)), "An autonomous coding agent", font=f_h, fill=TEXT)
-    d.text((s(92), s(322)), "that ships.", font=f_h, fill=BRASS)
 
-    f_b = ImageFont.truetype(REG, s(25))
-    for i, line in enumerate([
-            "Plans the work, writes the code, runs your real test",
-            "suite, and passes an independent review gate before",
-            "anything merges."]):
-        d.text((s(92), s(398 + i * 36)), line, font=f_b, fill=DIM)
+def render(jobs):
+    return asyncio.run(_render(jobs))
 
-    d.line([(s(92), s(536)), (s(1108), s(536))], fill=BORDER, width=SS)
-    f_m = ImageFont.truetype(MONO, s(19))
-    d.text((s(92), s(560)), "PLAN  ·  BUILD  ·  VERIFY  ·  REVIEW  ·  SHIP", font=f_m, fill=DIM)
-    tw = d.textlength("tektonix.io", font=f_m)
-    d.text((s(1108) - tw, s(560)), "tektonix.io", font=f_m, fill=BRASS)
 
-    _save(img, w, h, path, rgb=True)
+def main() -> None:
+    app, gem, full = app_tile(), gem_tile(), app_tile(full_bleed=True)
+    lock = lockup()
+    lw, lh = (int(float(v)) for v in re.search(r'viewBox="0 0 ([\d.]+) ([\d.]+)"', lock).groups())
+
+    sizes_gem = [16, 24, 32, 48, 64]
+    sizes_app = [64, 128, 180, 192, 256, 512, 1024]
+    jobs = ([(gem, s, s) for s in sizes_gem] + [(app, s, s) for s in sizes_app]
+            + [(full, 192, 192), (full, 512, 512), (lock, lw * 3, lh * 3),
+               (installer_header(), 150, 57), (installer_sidebar(), 164, 314), (og_card(), 1200, 630),
+               (gem, 1024, 1024)])
+    imgs = render(jobs)
+    it = iter(imgs)
+    G = {s: next(it) for s in sizes_gem}
+    A = {s: next(it) for s in sizes_app}
+    full192, full512, lock_png, header, sidebar, og, gem1024 = (next(it) for _ in range(7))
+
+    def icon_at(px: int) -> Image.Image:
+        """The right tile for a size: the gem below 128px, the constellation from 128 up."""
+        if px in G:
+            return G[px]
+        if px >= 128 and px in A:
+            return A[px]
+        src = gem1024 if px < 128 else A[1024]
+        return src.resize((px, px), Image.LANCZOS)
+
+    def ico(path: pathlib.Path, sizes):
+        frames = [icon_at(s) for s in sizes]
+        frames[-1].save(path, format="ICO", sizes=[(f.width, f.height) for f in frames],
+                        append_images=frames[:-1])
+
+    def out(rel: str) -> pathlib.Path:
+        p = (ONE_DIR / pathlib.Path(rel).name) if ONE_DIR else REPO / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    # The dashboard and the landing page.
+    for root in ("frontend/public", "site/public"):
+        icon_at(16).save(out(f"{root}/favicon-16x16.png"))
+        icon_at(32).save(out(f"{root}/favicon-32x32.png"))
+        ico(out(f"{root}/favicon.ico"), (16, 32, 48))
+        A[180].save(out(f"{root}/apple-touch-icon.png"))
+    A[192].save(out("frontend/public/icon-192.png"))
+    A[512].save(out("frontend/public/icon-512.png"))
+    full512.save(out("frontend/public/icon-maskable-512.png"))
+    ico(out("frontend/public/persei.ico"), (16, 24, 32, 48, 64, 128, 256))
+    for rel in ("frontend/src/assets/persei-logo.png", "site/src/assets/persei-logo.png"):
+        lock_png.save(out(rel))
+    og.convert("RGB").save(out("site/public/og-preview.png"))
+
+    # The desktop app (the names Tauri's own `tauri icon` would write).
+    icons = "app/src-tauri/icons"
+    for name, px in (("32x32.png", 32), ("64x64.png", 64), ("128x128.png", 128), ("128x128@2x.png", 256),
+                     ("icon.png", 512), ("Square30x30Logo.png", 30), ("Square44x44Logo.png", 44),
+                     ("Square71x71Logo.png", 71), ("Square89x89Logo.png", 89), ("Square107x107Logo.png", 107),
+                     ("Square142x142Logo.png", 142), ("Square150x150Logo.png", 150),
+                     ("Square284x284Logo.png", 284), ("Square310x310Logo.png", 310), ("StoreLogo.png", 50)):
+        icon_at(px).save(out(f"{icons}/{name}"))
+    G[64].save(out(f"{icons}/tray.png"))
+    ico(out(f"{icons}/icon.ico"), (16, 24, 32, 48, 64, 128, 256))
+    A[1024].save(out(f"{icons}/icon.icns"), format="ICNS")
+    header.convert("RGB").save(out(f"{icons}/installer/header.bmp"))
+    sidebar.convert("RGB").save(out(f"{icons}/installer/sidebar.bmp"))
+
+    # The vector sources, for anyone who needs the mark at another size.
+    for name, text in (("persei-app-icon.svg", app), ("persei-tab-icon.svg", gem), ("persei-lockup.svg", lock)):
+        out(f"scripts/brand/svg/{name}").write_text(text + "\n")
+    print("Persei brand assets written", f"to {ONE_DIR}" if ONE_DIR else "into the repo")
 
 
 if __name__ == "__main__":
-    OUT.mkdir(parents=True, exist_ok=True)
-    print("building Tektonix assets into", OUT)
-    lockup(OUT / "tektonix-logo.png")
-    icon(OUT / "favicon-16x16.png", 16)
-    icon(OUT / "favicon-32x32.png", 32)
-    ico(OUT / "favicon.ico")
-    # The Windows desktop shortcut's icon (install.ps1): Explorer shows up to
-    # 256px on a desktop, and a 48px frame scaled to that is a blur.
-    ico(OUT / "tektonix.ico", sizes=(16, 32, 48, 64, 128, 256))
-    apple_touch(OUT / "apple-touch-icon.png")
-    pwa_icon(OUT / "icon-192.png", 192)
-    pwa_icon(OUT / "icon-512.png", 512)
-    pwa_icon(OUT / "icon-maskable-512.png", 512, maskable=True)
-    og_card(OUT / "og-preview.png")
+    main()

@@ -1,4 +1,4 @@
-//! Tektonix desktop: the dashboard in a window, the compose stack under it,
+//! Persei desktop: the dashboard in a window, the compose stack under it,
 //! and a tray icon to reach both. One window, two pages: the window's own
 //! page (src/) is a small control panel; the dashboard itself is the agent's
 //! web app, shown in the same window once the stack answers (open_console,
@@ -198,7 +198,7 @@ fn log_line(app: &AppHandle, line: impl Into<String>) {
 
 static QUITTING: AtomicBool = AtomicBool::new(false);
 
-/// Quit Tektonix (quit.rs): ask first when a task is running, stop the
+/// Quit Persei (quit.rs): ask first when a task is running, stop the
 /// stack, stop Docker Desktop when this app started it, then exit. A
 /// second Quit while one is under way does nothing.
 fn shutdown(app: AppHandle) {
@@ -218,7 +218,7 @@ fn shutdown(app: AppHandle) {
             && !ask(
                 &app,
                 "A task is running",
-                "Quitting stops Tektonix, and the running task stops with it.",
+                "Quitting stops Persei, and the running task stops with it.",
                 "Quit anyway",
                 "Keep running",
             )
@@ -231,7 +231,7 @@ fn shutdown(app: AppHandle) {
             let _ = w.hide();
         }
         if let Some(tray) = app.tray_by_id("tektonix") {
-            let _ = tray.set_tooltip(Some("Tektonix: stopping..."));
+            let _ = tray.set_tooltip(Some("Persei: stopping..."));
         }
         if plan.stop_stack {
             // A Start or an update under way gets two minutes to finish; the
@@ -264,7 +264,7 @@ fn on_close(window: &tauri::Window) {
             tauri::async_runtime::spawn(async move {
                 let quit = ask(
                     &app,
-                    "Close Tektonix",
+                    "Close Persei",
                     "Quit stops the agent and its containers and frees their memory. \
                      Keep running leaves them working in the tray, where Quit stops everything later.\n\n\
                      This is remembered; change it in the control panel.",
@@ -480,15 +480,14 @@ fn restore_last_page(app: AppHandle) {
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open console", true, None::<&str>)?;
     let panel = MenuItem::with_id(app, "panel", "Control panel", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit (stops Tektonix)", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit (stops Persei)", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &panel, &quit])?;
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .expect("the bundle has an icon");
+    // The gem tile, not the window icon: the app icon is the constellation,
+    // which at tray size (16-24px) is a smudge (scripts/brand/build_assets.py).
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
     TrayIconBuilder::with_id("tektonix")
         .icon(icon)
-        .tooltip("Tektonix")
+        .tooltip("Persei")
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -517,7 +516,7 @@ const STRIP_FALLBACK: &str = r#"
     var bar = document.createElement('div');
     bar.setAttribute('data-tauri-drag-region', '');
     bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:30px;z-index:2147483647;display:flex;align-items:center;justify-content:space-between;padding-left:12px;background:#171b21;color:#e6e9ee;border-bottom:1px solid #2a313b;font:12px system-ui,sans-serif;user-select:none;-webkit-user-select:none;';
-    var name = document.createElement('span'); name.textContent = 'Tektonix'; name.setAttribute('data-tauri-drag-region', ''); name.style.fontWeight = '600';
+    var name = document.createElement('span'); name.textContent = 'Persei'; name.setAttribute('data-tauri-drag-region', ''); name.style.fontWeight = '600';
     var ctl = document.createElement('span'); ctl.style.cssText = 'display:flex;height:100%;';
     function btn(label, title, fn, close) {
       var b = document.createElement('button'); b.textContent = label; b.title = title;
@@ -561,7 +560,7 @@ pub fn navigation_allowed(url: &tauri::Url) -> bool {
 
 fn build_main_window(app: &AppHandle) -> tauri::Result<()> {
     tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
-        .title("Tektonix")
+        .title("Persei")
         .inner_size(1360.0, 860.0)
         .min_inner_size(900.0, 600.0)
         .decorations(false)
@@ -717,8 +716,8 @@ mod tests {
             assert!(super::navigation_allowed(&url(ok)), "{ok}");
         }
         for out in [
-            "https://tektonix.io/",
-            "https://github.com/DJG3DK/tektonix",
+            "https://perseiagent.ai/",
+            "https://github.com/DJG3DK/persei",
             "http://localhost:8000/",
             "http://localhost/",
             "http://localhost.evil.example:8100/",

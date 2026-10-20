@@ -1,6 +1,6 @@
 # agent-review
 
-The review dashboard and merge control for [Tektonix](https://github.com/DJG3DK/tektonix).
+The review dashboard and merge control for [Persei](https://github.com/DJG3DK/persei).
 
 A small Express service that shows what each project's agent workspace has that the live checkout
 doesn't, surfaces the [commit-reviewer](../commit-reviewer)'s verdict, and —

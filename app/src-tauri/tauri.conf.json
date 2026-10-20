@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tektonix",
+  "productName": "Persei",
+  "mainBinaryName": "persei",
   "version": "0.9.0",
   "identifier": "io.tektonix.desktop",
   "build": {
@@ -40,13 +41,23 @@
         ],
         "installerIcon": "icons/icon.ico",
         "headerImage": "icons/installer/header.bmp",
-        "sidebarImage": "icons/installer/sidebar.bmp"
+        "sidebarImage": "icons/installer/sidebar.bmp",
+        "installerHooks": "windows/hooks.nsh"
       }
     },
     "createUpdaterArtifacts": true,
     "linux": {
       "deb": {
-        "section": "devel"
+        "section": "devel",
+        "conflicts": [
+          "tektonix"
+        ],
+        "replaces": [
+          "tektonix"
+        ],
+        "provides": [
+          "tektonix"
+        ]
       },
       "appimage": {
         "bundleMediaFramework": false
@@ -54,12 +65,12 @@
     },
     "category": "DeveloperTool",
     "shortDescription": "A self-hosted coding agent",
-    "homepage": "https://tektonix.io"
+    "homepage": "https://perseiagent.ai"
   },
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/DJG3DK/tektonix/releases/latest/download/latest.json"
+        "https://github.com/DJG3DK/persei/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVFMzkyNjJDRUVBODM1NjgKUldSb05hanVMQ1k1N292N1ViZlBsSEx4UTBUaVJ4SlhPQzJLUmFaeGJ6RXFLdDZYME82SGZGWksK"
     }

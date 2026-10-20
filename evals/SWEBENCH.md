@@ -1,6 +1,6 @@
 # SWE-bench Verified
 
-Tektonix, run on SWE-bench Verified and graded by the official harness.
+Persei, run on SWE-bench Verified and graded by the official harness.
 `scripts/run_swebench.py` does both; `agent/evals/swebench.py` is the
 module.
 
@@ -18,16 +18,16 @@ statement. Changing any of them makes it a different benchmark.
 | isolation | each task is its own project: no memory, episode or history is shared between tasks |
 | internet | none. The published fix is on GitHub, so a benchmark project has no GitHub, web-page or cross-project tools, and its sandbox runs with `--network none` |
 | no answer-hunting | the task statement says the fix and the grading tests are not in the environment, and a benchmark project's shell refuses searches for them with the same explanation (`agent/tools/benchmark_guard.py`): git's object store and unreachable objects, other branches, tags and refs, `gh`, `pip download`/`install`, `curl`/`wget`, filesystem-wide `find`/`grep`, caches outside the repository, and reading or decompiling stale `.pyc` files. A compound command loses only its hunting segments; the rest runs, with the refusal named on its result. The first samples spent 15% of their shell commands on this, one curling the fix's own pull request. Only the sandbox's missing network stopped it |
-| grading | `swebench.harness.run_evaluation`, the official harness, in its own environment. Tektonix never grades itself |
+| grading | `swebench.harness.run_evaluation`, the official harness, in its own environment. Persei never grades itself |
 
 The repository is copied out of the task's image, not cloned. Several
 (astropy, scikit-learn) are built in place there, and the image's git history
 already ends at the task. The runner checks that no commit is reachable
 beyond it before a task starts, and refuses the task if one is.
 
-Every word the harness itself puts into the agent's conversation -- the task framing, a guard's refusal, a checkpoint, the ship gate's feedback, a handover to the fallback seat -- starts with `[Tektonix harness]` (`agent/harness_voice.py`), so a trajectory shows plainly which text was the system's and which was the model's.
+Every word the harness itself puts into the agent's conversation -- the task framing, a guard's refusal, a checkpoint, the ship gate's feedback, a handover to the fallback seat -- starts with `[Persei harness]` (`agent/harness_voice.py`), so a trajectory shows plainly which text was the system's and which was the model's.
 
-## What is Tektonix's own, and so part of what is measured
+## What is Persei's own, and so part of what is measured
 
 - **The agent:** the same graph, models, prompts and tools as production,
   minus the tools listed above. The runtime settings are production's, read
@@ -77,7 +77,7 @@ what three of the failures did.
       json.dump([dict(r) for r in ds], open('/opt/swebench/verified.json', 'w'))"
 
 The harness lives in its own environment so its dependencies never meet
-Tektonix's. `SWEBENCH_PYTHON` and `SWEBENCH_DATASET_JSON` override the paths.
+Persei's. `SWEBENCH_PYTHON` and `SWEBENCH_DATASET_JSON` override the paths.
 
 ## Running
 

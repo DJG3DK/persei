@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the landing page and put it where nginx serves tektonix.io.
+# Build the landing page and put it where nginx serves perseiagent.ai.
 #
 # Static files only: there is no process to restart and nothing to keep warm,
 # so a deploy is a copy. Run it from site/.

@@ -1,8 +1,8 @@
-"""The newsletter signup behind tektonix.io.
+"""The newsletter signup behind perseiagent.ai.
 
 Deliberately not part of the agent. It belongs to the landing page -- the same
-reasoning that moved the page out of the product: a self-hosted Tektonix has
-no business shipping an endpoint that writes to tektonix.io's mailing list.
+reasoning that moved the page out of the product: a self-hosted Persei has
+no business shipping an endpoint that writes to perseiagent.ai's mailing list.
 `site/` is excluded from the release tarball, and this goes with it.
 
 It does one thing: take a name and an address from the form on the landing
@@ -83,7 +83,7 @@ _load_env_file(os.path.join(_HERE, ".env"))
 # existing database because that is what pg_dump already backs up
 # (docs/backup.md); point it somewhere else and nothing here cares.
 DSN = os.environ.get("NEWSLETTER_PG_DSN") or os.environ.get("LANGGRAPH_PG_DSN") or ""
-SITE_URL = (os.environ.get("SITE_URL") or "https://tektonix.io").rstrip("/")
+SITE_URL = (os.environ.get("SITE_URL") or "https://perseiagent.ai").rstrip("/")
 PORT = int(os.environ.get("NEWSLETTER_PORT") or 8300)
 
 OK_URL = f"{SITE_URL}/subscribed/"
@@ -214,7 +214,7 @@ async def lifespan(app: FastAPI):
         await pool.close()
 
 
-app = FastAPI(title="tektonix.io newsletter", lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title="perseiagent.ai newsletter", lifespan=lifespan, docs_url=None, redoc_url=None)
 
 
 @app.get("/health")
@@ -235,14 +235,14 @@ async def health():
 # Cached so a busy day costs GitHub one call in ten minutes, and they fall
 # back to the release page rather than failing. Linux since 2026-10-04: the
 # AppImage (it updates itself) and the .deb.
-RELEASES_API = "https://api.github.com/repos/DJG3DK/tektonix/releases/latest"
-RELEASES_PAGE = "https://github.com/DJG3DK/tektonix/releases/latest"
+RELEASES_API = "https://api.github.com/repos/DJG3DK/persei/releases/latest"
+RELEASES_PAGE = "https://github.com/DJG3DK/persei/releases/latest"
 _ASSETS = {
-    "windows": re.compile(r"^Tektonix_[0-9A-Za-z.\-]+_x64-setup\.exe$"),
-    "linux": re.compile(r"^Tektonix_[0-9A-Za-z.\-]+_amd64\.AppImage$"),
-    "linux-deb": re.compile(r"^Tektonix_[0-9A-Za-z.\-]+_amd64\.deb$"),
+    "windows": re.compile(r"^(?:Persei|Tektonix)_[0-9A-Za-z.\-]+_x64-setup\.exe$"),
+    "linux": re.compile(r"^(?:Persei|Tektonix)_[0-9A-Za-z.\-]+_amd64\.AppImage$"),
+    "linux-deb": re.compile(r"^(?:Persei|Tektonix)_[0-9A-Za-z.\-]+_amd64\.deb$"),
 }
-_RELEASE_DOWNLOADS = "https://github.com/DJG3DK/tektonix/releases/download/"
+_RELEASE_DOWNLOADS = "https://github.com/DJG3DK/persei/releases/download/"
 _DOWNLOAD_TTL_S = 600
 _download_cache: dict[str, tuple[float, str]] = {}
 

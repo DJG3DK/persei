@@ -7,7 +7,7 @@ import { BalanceStrip } from "./BalanceStrip";
 import { RepoBadge } from "./RepoBadge";
 import { StatusBadge } from "./StatusBadge";
 import "./Sidebar.css";
-import logoUrl from "../assets/tektonix-logo.png";
+import logoUrl from "../assets/persei-logo.png";
 import { Icon } from "./Icon";
 import { useGitHubInboxCount } from "../useGitHubInboxCount";
 
@@ -362,13 +362,13 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="sidebar-header">
         <div className="sidebar-logo">
-          {/* The Tektonix lockup -- plumb-line mark plus the wordmark,
+          {/* The Persei lockup -- the gold diamond P plus the wordmark,
               replacing the placeholder diamond glyph. */}
           {/* Imported through vite (not public/): the backend only mounts
               /assets/*, so a root-level file fell through to the SPA
               catch-all and served HTML as the image (seen live). Bundling
               gives it a hashed /assets URL the existing mount serves. */}
-          <img className="sidebar-logo-img" src={logoUrl} alt="Tektonix" />
+          <img className="sidebar-logo-img" src={logoUrl} alt="Persei" />
         </div>
         {/* Plan-first (operator decision 2026-08-28): "we do not go directly
             to tasks... Planning chat should always happen first." The primary

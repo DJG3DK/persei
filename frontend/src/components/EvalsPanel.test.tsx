@@ -121,6 +121,6 @@ describe("EvalsPanel", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     render(<EvalsPanel />);
     await userEvent.click(await screen.findByRole("button", { name: /copy scorecard/i }));
-    expect(writeText.mock.calls[0][0]).toMatch(/^Tektonix golden suite, 2026-09-23: 1\/2 tasks passed \(50%\)/);
+    expect(writeText.mock.calls[0][0]).toMatch(/^Persei golden suite, 2026-09-23: 1\/2 tasks passed \(50%\)/);
   });
 });

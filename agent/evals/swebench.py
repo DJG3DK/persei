@@ -1,4 +1,4 @@
-"""SWE-bench Verified, run through the real Tektonix pipeline and graded by the
+"""SWE-bench Verified, run through the real Persei pipeline and graded by the
 official harness.
 
 What makes the number a SWE-bench number, and so what this must not change:
@@ -18,7 +18,7 @@ What makes the number a SWE-bench number, and so what this must not change:
   GitHub, web or cross-project tools, and its sandbox has no network.
 * Graded by `swebench.harness.run_evaluation`, never by us.
 
-What is Tektonix's own and is part of the system being measured: the agent,
+What is Persei's own and is part of the system being measured: the agent,
 its gate (`checks` below: the changed files compile, the package imports), the
 independent reviewer, and how the final diff becomes a prediction
 (`prediction_patch`).
@@ -168,7 +168,7 @@ def materialize(instance: dict, root: Path) -> dict:
     if future:
         raise SetupError(f"{image}: {len(future)} commit(s) from after the task are reachable "
                          f"(first: {future[0][:12]}) -- refusing to run")
-    for key, value in (("user.name", "Tektonix"), ("user.email", "agent@tektonix.local")):
+    for key, value in (("user.name", "Persei"), ("user.email", "agent@tektonix.local")):
         _run(["git", "config", key, value], live)
     if _run(["git", "branch", "--show-current"], live).strip() != "main":
         _run(["git", "branch", "-f", "main", head], live)

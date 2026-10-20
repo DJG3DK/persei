@@ -12,7 +12,7 @@ describe("passkeys helpers", () => {
   it("turns the server's JSON into the binary options the browser wants", () => {
     const opts = creationOptions({
       challenge: toBase64url(new Uint8Array([1, 2, 3])),
-      rp: { id: "agent.example.com", name: "Tektonix" },
+      rp: { id: "agent.example.com", name: "Persei" },
       user: { id: toBase64url(new Uint8Array([9, 9])), name: "d@x", displayName: "d@x" },
       pubKeyCredParams: [{ type: "public-key", alg: -7 }],
       excludeCredentials: [{ type: "public-key", id: toBase64url(new Uint8Array([7])) }],

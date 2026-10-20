@@ -76,7 +76,7 @@ npm run build
 cd ..
 
 # 3. Landing page -- typecheck, lint, tests, build, then the newsletter signup.
-#    site/ is tektonix.io, not the product; CI still gates it.
+#    site/ is perseiagent.ai, not the product; CI still gates it.
 cd site && npm ci
 npx tsc --noEmit -p tsconfig.app.json
 npm run lint

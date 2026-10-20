@@ -1,6 +1,6 @@
-# Tektonix dashboard
+# Persei dashboard
 
-The React/Vite frontend for [Tektonix](../README.md). It is not a standalone
+The React/Vite frontend for [Persei](../README.md). It is not a standalone
 app: `agent/server.py` serves the built bundle from `dist/` itself, so there is
 no separate frontend process in production.
 

@@ -2,7 +2,7 @@
  * LogoLoom, called directly instead of over MCP.
  *
  * Upstream (mcpware/logoloom, MIT) ships an MCP stdio server whose four tools
- * are thin wrappers over four local modules. Tektonix has no MCP client, and
+ * are thin wrappers over four local modules. Persei has no MCP client, and
  * adding one -- protocol, handshake, a long-lived subprocess per session --
  * to reach four pure functions in the same language would be machinery with
  * nothing on the other end of it. This imports the modules.

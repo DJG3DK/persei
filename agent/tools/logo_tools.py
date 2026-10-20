@@ -8,7 +8,7 @@ anything -- the model writes the SVG. That is worth being plain about,
 because the pitch reads as though the tool produces concepts and it does not:
 what it produces is everything that happens after a concept exists.
 
-It ships as an MCP server. Tektonix has no MCP client, and the server's four
+It ships as an MCP server. Persei has no MCP client, and the server's four
 tools are thin wrappers over four local Node modules, so this calls the
 modules through services/logoloom/bridge.mjs rather than adding a protocol to
 reach functions already on disk. Three of the four are used as they are; the

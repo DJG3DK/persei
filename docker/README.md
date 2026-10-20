@@ -8,7 +8,7 @@ cp docker/.env.example .env      # set OPENROUTER_API_KEY and PROJECTS_DIR
 docker compose up -d
 ```
 
-**On Windows, the desktop app (`app/`, an installer on each release) does all of this in a window. The script below still works:** double-click `Install Tektonix.bat`. It asks for the two
+**On Windows, the desktop app (`app/`, an installer on each release) does all of this in a window. The script below still works:** double-click `Install Persei.bat`. It asks for the two
 values, starts Docker Desktop if it is installed but not running, waits for
 it, brings the stack up and offers to open the console. The window stays open
 at the end, so a failure is readable rather than a flash of text.

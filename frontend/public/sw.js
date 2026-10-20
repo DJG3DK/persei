@@ -1,4 +1,4 @@
-/* Tektonix's service worker.
+/* Persei's service worker.
  *
  * It exists for two reasons, in this order:
  *
@@ -89,7 +89,7 @@ self.addEventListener('push', (event) => {
   } catch {
     data = { body: event.data && event.data.text ? event.data.text() : '' };
   }
-  const title = data.title || 'Tektonix';
+  const title = data.title || 'Persei';
   event.waitUntil(self.registration.showNotification(title, {
     body: data.body || '',
     // The app's own mark, not the browser's globe -- on Android this is what
@@ -162,10 +162,10 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => caches.match('/', { cacheName: SHELL }).then(
           (hit) => hit || new Response(
-            '<!doctype html><meta charset="utf-8"><title>Tektonix</title>'
+            '<!doctype html><meta charset="utf-8"><title>Persei</title>'
             + '<body style="background:#11151a;color:#edf0f4;font:16px system-ui;'
             + 'display:grid;place-items:center;height:100vh;margin:0;text-align:center">'
-            + '<div><p>Tektonix is unreachable.</p>'
+            + '<div><p>Persei is unreachable.</p>'
             + '<p style="color:#a3adbb;font-size:14px">This device is offline, or the box is down.</p></div>',
             { status: 503, headers: { 'content-type': 'text/html; charset=utf-8' } },
           ),

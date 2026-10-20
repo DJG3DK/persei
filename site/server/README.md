@@ -4,9 +4,9 @@ The form at the bottom of [the landing page](../src/LandingPage.tsx) posts
 here. It writes a name and an address down and does nothing else — **nothing
 sends yet**.
 
-Not part of Tektonix, for the same reason the landing page is not: a
+Not part of Persei, for the same reason the landing page is not: a
 self-hosted agent has no business shipping an endpoint that writes to
-tektonix.io's mailing list. `site/` is dropped from the release tarball and
+perseiagent.ai's mailing list. `site/` is dropped from the release tarball and
 this goes with it.
 
 ## Shape
@@ -19,7 +19,7 @@ JavaScript.** So the form is a plain HTML POST, which means
   show a bare status to nobody — `/subscribed/` or `/subscribe-failed/`, both
   static pages in `site/public/`;
 * same origin, so no CORS and no preflight. nginx routes
-  `tektonix.io/newsletter/subscribe` here.
+  `perseiagent.ai/newsletter/subscribe` here.
 
 A repeat signup is a **success**. The person meant "put me on the list", they
 are on the list, and an error would send them away thinking it had failed. It

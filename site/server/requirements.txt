@@ -1,4 +1,4 @@
-# The newsletter signup behind tektonix.io. Four packages: a web framework, a
+# The newsletter signup behind perseiagent.ai. Four packages: a web framework, a
 # Postgres driver, form parsing and the server to run it. Separate from the
 # agent's requirements.txt because this is the landing page's service and
 # neither ships with an installation.

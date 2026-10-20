@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run SWE-bench Verified through Tektonix and grade it with the official harness.
+"""Run SWE-bench Verified through Persei and grade it with the official harness.
 
     scripts/run_swebench.py --instances psf__requests-1142 django__django-10097
     scripts/run_swebench.py --sample 50 --seed 1 --parallel 3

@@ -5,7 +5,7 @@
 Please report security issues **privately**, not in a public issue.
 
 Use GitHub's private reporting: **Security → Report a vulnerability** on
-[github.com/DJG3DK/tektonix](https://github.com/DJG3DK/tektonix/security/advisories/new).
+[github.com/DJG3DK/persei](https://github.com/DJG3DK/persei/security/advisories/new).
 That opens a channel only the maintainer can see.
 
 Include what you'd want to receive: what you did, what happened, what you
@@ -19,7 +19,7 @@ one, and credit in the release notes unless you'd rather not be named.
 
 ## What this project is, threat-model-wise
 
-Tektonix runs an LLM that writes and executes code against your repositories.
+Persei runs an LLM that writes and executes code against your repositories.
 That is the product, not a bug — so it's worth being precise about which
 capabilities are intended and which would be real vulnerabilities.
 

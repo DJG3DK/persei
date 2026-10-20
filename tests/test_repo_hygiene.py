@@ -130,7 +130,7 @@ def test_no_source_file_contains_a_raw_nul_byte():
 
 
 def test_the_landing_page_is_not_part_of_an_installation():
-    """site/ is tektonix.io's public page: marketing, not product.
+    """site/ is perseiagent.ai's public page: marketing, not product.
 
     Somebody self-hosting the agent wants the console, not a page selling it
     to them, so the release tarball drops the directory and install.sh never
@@ -544,7 +544,7 @@ def test_the_bundle_gives_every_committing_container_a_git_identity():
         for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
             assert key in env, f"{svc} lacks {key}"
         assert env["GIT_AUTHOR_EMAIL"] == "${GIT_USER_EMAIL:-${ADMIN_EMAIL:-admin@example.com}}", "the operator's own, else the sign-in address"
-        assert env["GIT_AUTHOR_NAME"] == "${GIT_USER_NAME:-Tektonix}"
+        assert env["GIT_AUTHOR_NAME"] == "${GIT_USER_NAME:-Persei}"
     agent = compose["services"]["agent"]["environment"]
     assert agent["GIT_USER_NAME"] == "${GIT_USER_NAME:-}" and agent["GIT_USER_EMAIL"] == "${GIT_USER_EMAIL:-}", (
         "the Environment page reads the container's environment for these two names")

@@ -171,13 +171,13 @@ class Item:
         return asdict(self)
 
 
-# A Tektonix task branch: agent/<task uuid> (agent/tools/git.py
+# A Persei task branch: agent/<task uuid> (agent/tools/git.py
 # task_branch_name), and the pre-rebase backups beside it.
 _OWN_BRANCH = re.compile(r"^agent/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-|$)")
 
 
 def _opened_by_tektonix(pr: dict) -> bool:
-    """A pull request Tektonix opened for one of its own tasks. Never an inbox
+    """A pull request Persei opened for one of its own tasks. Never an inbox
     item, whatever the author setting: with "anyone", the inbox offered each
     task's own PR back as a new task, which opened another PR for the next
     poll to offer ("Land the dependency update proposed in pull request #42

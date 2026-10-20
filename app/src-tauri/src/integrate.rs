@@ -14,8 +14,15 @@ use std::path::{Path, PathBuf};
 /// The app's identifier, its data directory's name (tauri.conf.json).
 const IDENTIFIER: &str = "io.tektonix.desktop";
 /// The window class the menu entry is matched to (the .deb's own entry
-/// says the same), so a running window groups under the menu's icon.
-const WM_CLASS: &str = "tektonix";
+/// says the same), so a running window groups under the menu's icon. It is
+/// the binary's name (tauri.conf.json mainBinaryName).
+const WM_CLASS: &str = "persei";
+/// The entry and icon name, the same as the binary's.
+const NAME: &str = "persei";
+/// What versions before the rename to Persei (0.9.4) wrote. An update
+/// replaces the AppImage in place, so the first run of the new one removes
+/// these, or the menu would show the app twice.
+const OLD_NAME: &str = "tektonix";
 
 /// `$XDG_DATA_HOME`, else `~/.local/share`.
 pub fn data_home(xdg_data_home: Option<&str>, home: &Path) -> PathBuf {
@@ -47,8 +54,8 @@ pub fn exec_arg(path: &Path) -> String {
 /// The menu entry, the same as the .deb's but for where it runs from.
 pub fn desktop_entry(exec: &Path) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nName=Tektonix\nComment=A self-hosted coding agent\n\
-         Exec={} %U\nIcon=tektonix\nTerminal=false\nCategories=Development;\n\
+        "[Desktop Entry]\nType=Application\nName=Persei\nComment=A self-hosted coding agent\n\
+         Exec={} %U\nIcon={NAME}\nTerminal=false\nCategories=Development;\n\
          StartupWMClass={WM_CLASS}\n",
         exec_arg(exec)
     )
@@ -83,7 +90,7 @@ const ICONS: [(&str, &[u8]); 3] = [
 fn write_entry(data_home: &Path, exec: &Path) -> std::io::Result<()> {
     let apps = data_home.join("applications");
     std::fs::create_dir_all(&apps)?;
-    let entry = apps.join("tektonix.desktop");
+    let entry = apps.join(format!("{NAME}.desktop"));
     let text = desktop_entry(exec);
     if std::fs::read_to_string(&entry).ok().as_deref() != Some(text.as_str()) {
         std::fs::write(&entry, text)?;
@@ -91,11 +98,13 @@ fn write_entry(data_home: &Path, exec: &Path) -> std::io::Result<()> {
     for (size, bytes) in ICONS {
         let dir = data_home.join("icons/hicolor").join(size).join("apps");
         std::fs::create_dir_all(&dir)?;
-        let icon = dir.join("tektonix.png");
+        let icon = dir.join(format!("{NAME}.png"));
         if std::fs::metadata(&icon).map(|m| m.len()).ok() != Some(bytes.len() as u64) {
             std::fs::write(&icon, bytes)?;
         }
+        let _ = std::fs::remove_file(dir.join(format!("{OLD_NAME}.png")));
     }
+    let _ = std::fs::remove_file(apps.join(format!("{OLD_NAME}.desktop")));
     // Menus that cache (some do) pick the entry up now rather than at the
     // next login. Best effort: not every desktop has the tool.
     let _ = std::process::Command::new("update-desktop-database")
@@ -185,7 +194,7 @@ mod tests {
     #[test]
     fn a_download_moves_an_installed_copy_stays_and_a_deb_is_left_alone() {
         let installed = Path::new("/h/.local/share/io.tektonix.desktop/Tektonix.AppImage");
-        let download = Path::new("/h/Downloads/Tektonix_0.9.2_amd64.AppImage");
+        let download = Path::new("/h/Downloads/Persei_0.9.2_amd64.AppImage");
         assert_eq!(step(Some(download), installed, false), Step::Move);
         assert_eq!(step(Some(installed), installed, false), Step::Entry);
         assert_eq!(
@@ -204,7 +213,8 @@ mod tests {
     fn the_menu_entry_matches_the_debs_and_quotes_its_path() {
         let e = desktop_entry(Path::new("/home/o\"b $x/Tektonix.AppImage"));
         assert!(e.contains("Exec=\"/home/o\\\"b \\$x/Tektonix.AppImage\" %U\n"));
-        assert!(e.contains("StartupWMClass=tektonix\n") && e.contains("Icon=tektonix\n"));
+        assert!(e.contains("StartupWMClass=persei\n") && e.contains("Icon=persei\n"));
+        assert!(e.contains("Name=Persei\n"));
         assert!(e.contains("Categories=Development;\n"));
     }
 }

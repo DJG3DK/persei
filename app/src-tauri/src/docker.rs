@@ -227,7 +227,7 @@ pub fn pkexec_failure(e: &proc::ProcError, what: &str) -> String {
     match e {
         proc::ProcError::Missing(_) => format!(
             "could not {what}: this system has no pkexec to ask for your password. \
-             Run the commands in a terminal with sudo instead (Tektonix's install guide lists them)."
+             Run the commands in a terminal with sudo instead (Persei's install guide lists them)."
         ),
         proc::ProcError::Failed { code: 126, .. } => {
             format!("could not {what}: the password prompt was cancelled")
@@ -444,7 +444,7 @@ fn which(program: &str) -> bool {
 #[cfg(target_os = "linux")]
 fn restart_with_docker_group(app: &AppHandle) -> Result<String, String> {
     if std::env::var_os(RESTARTED).is_some() || !which("sg") {
-        return Ok("Docker is ready for your account. Log out and back in so it applies, then open Tektonix again.".into());
+        return Ok("Docker is ready for your account. Log out and back in so it applies, then open Persei again.".into());
     }
     let exe = std::env::var_os("APPIMAGE")
         .map(std::path::PathBuf::from)
@@ -458,7 +458,7 @@ fn restart_with_docker_group(app: &AppHandle) -> Result<String, String> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| format!("could not restart Tektonix: {e}"))?;
+        .map_err(|e| format!("could not restart Persei: {e}"))?;
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
@@ -466,9 +466,9 @@ fn restart_with_docker_group(app: &AppHandle) -> Result<String, String> {
     });
     note(
         app,
-        "Docker is ready. Restarting Tektonix so it can use it...",
+        "Docker is ready. Restarting Persei so it can use it...",
     );
-    Ok("Docker is ready. Restarting Tektonix so it can use it...".into())
+    Ok("Docker is ready. Restarting Persei so it can use it...".into())
 }
 
 #[cfg(target_os = "linux")]

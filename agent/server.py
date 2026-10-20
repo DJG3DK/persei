@@ -742,7 +742,7 @@ async def _github_notify(text: str, repo: str) -> None:
     if settings["notify"].get("email"):
         to = settings["notify"].get("email_to") or config.admin_email
         try:
-            await send_plain_email(config, to, f"[Tektonix] GitHub inbox: {repo}", text)
+            await send_plain_email(config, to, f"[Persei] GitHub inbox: {repo}", text)
         except Exception:  # noqa: BLE001 -- best-effort, like every alert
             logger.exception("github inbox: email to %s failed", to)
 

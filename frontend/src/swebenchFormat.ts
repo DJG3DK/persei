@@ -54,8 +54,8 @@ export function swebenchScorecard(r: SwebenchRunSummary, referenceFails: string[
   const models = modelList(r.models).join(", ");
   const resolved = r.resolved ?? 0;
   const head = r.kind === "full"
-    ? `Tektonix resolves ${resolved} of the ${r.total} SWE-bench Verified tasks (${((100 * resolved) / r.total).toFixed(1)}%)`
-    : `Tektonix resolved ${resolved} of a ${r.total}-task ${r.kind === "sample" ? "sample" : "selection"} of SWE-bench Verified`;
+    ? `Persei resolves ${resolved} of the ${r.total} SWE-bench Verified tasks (${((100 * resolved) / r.total).toFixed(1)}%)`
+    : `Persei resolved ${resolved} of a ${r.total}-task ${r.kind === "sample" ? "sample" : "selection"} of SWE-bench Verified`;
   const perTask = r.total_cost_usd != null && r.total ? `${usd(r.total_cost_usd / r.total)} per task` : "";
   return [
     `${head}, ${day(r.started_at)}, graded by the official SWE-bench harness.`,

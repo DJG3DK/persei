@@ -1,17 +1,17 @@
 #!/bin/sh
-# Install the Tektonix desktop app on Linux.
+# Install the Persei desktop app on Linux.
 #
-#   curl -fsSL https://tektonix.io/install-linux.sh | sh
-#   curl -fsSL https://tektonix.io/install-linux.sh | sh -s -- --version v0.9.2-rc2
+#   curl -fsSL https://perseiagent.ai/install-linux.sh | sh
+#   curl -fsSL https://perseiagent.ai/install-linux.sh | sh -s -- --version v0.9.2-rc2
 #
 # Downloads the AppImage from the newest release on GitHub (or the version
 # named), checks it against the SHA-256 GitHub publishes for it, puts it
-# where the app keeps itself, adds Tektonix to your app menu, and starts it.
+# where the app keeps itself, adds Persei to your app menu, and starts it.
 # Your own files only: nothing here needs root. Docker, if it is missing, is
 # set up by the app itself, which asks for your password once.
 set -eu
 
-REPO="DJG3DK/tektonix"
+REPO="DJG3DK/persei"
 API="${TEKTONIX_API:-https://api.github.com/repos/$REPO/releases}"
 VERSION=""
 
@@ -25,12 +25,12 @@ while [ $# -gt 0 ]; do
 done
 
 say() { printf '%s\n' "$*"; }
-die() { printf 'tektonix: %s\n' "$*" >&2; exit 1; }
+die() { printf 'persei: %s\n' "$*" >&2; exit 1; }
 
-[ "$(uname -s)" = Linux ] || die "this installer is for Linux; Windows has its own installer at tektonix.io"
+[ "$(uname -s)" = Linux ] || die "this installer is for Linux; Windows has its own installer at perseiagent.ai"
 case "$(uname -m)" in
     x86_64|amd64) ;;
-    *) die "there is no Tektonix build for $(uname -m) yet (x86_64 only)" ;;
+    *) die "there is no Persei build for $(uname -m) yet (x86_64 only)" ;;
 esac
 command -v curl >/dev/null || die "curl is needed"
 command -v sha256sum >/dev/null || die "sha256sum is needed (coreutils)"
@@ -61,9 +61,9 @@ FOUND="$(printf '%s\n' "$JSON" \
     | grep -oE '"(name|digest|browser_download_url)": *"[^"]*"' \
     | awk '
     /"name":/ { n = $0; sub(/.*"name": *"/, "", n); sub(/".*/, "", n); cur = n }
-    cur ~ /^Tektonix_[0-9A-Za-z.-]+_amd64\.AppImage$/ && /"digest":/ {
+    cur ~ /^(Persei|Tektonix)_[0-9A-Za-z.-]+_amd64\.AppImage$/ && /"digest":/ {
         d = $0; sub(/.*"digest": *"sha256:/, "", d); sub(/".*/, "", d); digest = d }
-    cur ~ /^Tektonix_[0-9A-Za-z.-]+_amd64\.AppImage$/ && /"browser_download_url":/ {
+    cur ~ /^(Persei|Tektonix)_[0-9A-Za-z.-]+_amd64\.AppImage$/ && /"browser_download_url":/ {
         u = $0; sub(/.*"browser_download_url": *"/, "", u); sub(/".*/, "", u); url = u }
     END { if (url != "") print url, digest }')"
 URL="${FOUND%% *}"
@@ -88,7 +88,7 @@ trap - EXIT
 # The menu entry and icon, written by the app itself (the same code it runs
 # when started from anywhere else), without opening a window.
 "$TARGET" --integrate || die "the app could not add itself to the menu"
-say "Installed: Tektonix is in your app menu."
+say "Installed: Persei is in your app menu."
 
 if [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
     say "Starting it..."

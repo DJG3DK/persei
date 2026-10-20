@@ -179,7 +179,7 @@ jobs:
 
   site:
     name: Landing page — typecheck, lint, test, build
-    # tektonix.io's public page, built separately from the console and not
+    # perseiagent.ai's public page, built separately from the console and not
     # shipped with an installation (scripts/package_release.sh drops it). Its
     # build asserts the page ends up with no JavaScript at all, so a change
     # that reintroduced a runtime would fail here rather than quietly ship one.

@@ -38,7 +38,7 @@ const LINUX = /Linux/.test(navigator.platform || navigator.userAgent) && !/Andro
 const DOCKER_TEXT = {
   windows: {
     missing: { title: "Docker Desktop is not installed", button: "install", label: "Install Docker Desktop",
-      body: "Tektonix runs in containers. This installs WSL 2 if it is missing and then Docker Desktop, from Docker's own site. Windows will ask for permission, and a restart may be needed." },
+      body: "Persei runs in containers. This installs WSL 2 if it is missing and then Docker Desktop, from Docker's own site. Windows will ask for permission, and a restart may be needed." },
     stopped: { title: "Docker Desktop is not running", button: "start", label: "Start Docker Desktop",
       body: "Start it and it comes up in a minute. If Docker Desktop itself says \"Virtualization support not detected\", the CPU's virtualization is switched off in the firmware (BIOS/UEFI: Intel VT-x or AMD SVM); no installer can turn that on." },
     denied: { title: "Docker refused this account", body: "Open Docker Desktop once, then check again." },
@@ -46,11 +46,11 @@ const DOCKER_TEXT = {
   },
   linux: {
     missing: { title: "Docker is not installed", button: "install", label: "Install Docker",
-      body: "Tektonix runs in containers. This installs Docker Engine (with Docker's own install script, or from your distribution's packages on Arch-based systems like CachyOS), starts its service, and lets your account use it. Your system asks for your password once, and Tektonix restarts itself when it is done." },
+      body: "Persei runs in containers. This installs Docker Engine (with Docker's own install script, or from your distribution's packages on Arch-based systems like CachyOS), starts its service, and lets your account use it. Your system asks for your password once, and Persei restarts itself when it is done." },
     stopped: { title: "Docker is not running", button: "start", label: "Start Docker",
       body: "The Docker service is installed but stopped. Starting it asks for your password (or starts Docker Desktop, if that is what you use)." },
     denied: { title: "Your account cannot use Docker yet", button: "install", label: "Give my account access",
-      body: "Docker is running, but only members of the docker group may use it. This adds you (your system asks for your password once), and Tektonix restarts itself with access." },
+      body: "Docker is running, but only members of the docker group may use it. This adds you (your system asks for your password once), and Persei restarts itself with access." },
     "no-compose": { title: "This Docker has no compose command", body: "Install the compose plugin (the docker-compose-plugin package) and check again." },
   },
 };
@@ -67,7 +67,7 @@ async function checkDocker() {
   // restarts itself into the group; there is nothing to ask (2026-10-06).
   if (state === "denied" && LINUX && await invoke("docker_can_restart")) {
     $("docker-title").textContent = "Getting Docker access…";
-    $("docker-text").textContent = "Your account is in the docker group already. Tektonix restarts itself with it in a moment.";
+    $("docker-text").textContent = "Your account is in the docker group already. Persei restarts itself with it in a moment.";
     try { say(await invoke("docker_install")); } catch (e) { fail(e); }
     return;
   }
@@ -303,8 +303,8 @@ $("btn-check-stack").onclick = async () => {
     if (info.available) {
       pendingStackUpdate = info.latest;
       $("update-text").textContent = info.stack_verified
-        ? `Tektonix ${info.latest} is out; the stack is on ${info.installed}.`
-        : `The stack's release cannot be verified; Update Tektonix puts it on ${info.latest}.`;
+        ? `Persei ${info.latest} is out; the stack is on ${info.installed}.`
+        : `The stack's release cannot be verified; Update Persei puts it on ${info.latest}.`;
       $("btn-update-stack").disabled = false;
     } else {
       $("update-text").textContent = `The stack is up to date (${info.installed}).`;

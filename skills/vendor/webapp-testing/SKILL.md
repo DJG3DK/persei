@@ -94,7 +94,7 @@ with sync_playwright() as p:
   - `element_discovery.py` - Discovering buttons, links, and inputs on a page
   - `static_html_automation.py` - Using file:// URLs for local HTML
   - `console_logging.py` - Capturing console logs during automation
-## Tektonix environment notes (local addition, not upstream)
+## Persei environment notes (local addition, not upstream)
 
 - Your `bash` tool runs EACH command in its own ephemeral container. A dev
   server started in one bash call is GONE by the next call. Therefore the

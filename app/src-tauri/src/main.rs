@@ -26,7 +26,7 @@ fn main() {
         std::process::exit(match tektonix_lib::integrate::integrate_only() {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("tektonix: {e}");
+                eprintln!("persei: {e}");
                 1
             }
         });

@@ -386,9 +386,9 @@ def test_a_repeat_guard_row_is_filed_under_the_tool_it_blocked(tmp_path, monkeyp
     now = 1_800_000_000.0
     rows = [
         {"ts": now - 60, "tool": "unknown", "ok": False,
-         "detail": "[Tektonix harness] ERROR: `bash` with these exact arguments has now been requested 4 times"},
+         "detail": "[Persei harness] ERROR: `bash` with these exact arguments has now been requested 4 times"},
         {"ts": now - 50, "tool": "unknown", "ok": False,
-         "detail": "[Tektonix harness] REPEATED CALL: this is the 3rd identical `read` call in a row"},
+         "detail": "[Persei harness] REPEATED CALL: this is the 3rd identical `read` call in a row"},
         {"ts": now - 40, "tool": "unknown", "ok": False, "detail": "something else"},
     ]
     log.write_text("".join(json.dumps(r) + "\n" for r in rows))

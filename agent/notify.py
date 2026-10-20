@@ -108,7 +108,7 @@ async def _push_operators(auth_pool, text: str, repo: str | None, url: str = "/"
     for t in targets:
         if not _may_hear_about(t["role"], t["allowed_repos"], repo):
             continue
-        ok, status = await push.send_one(t, title.strip() or "Tektonix", body,
+        ok, status = await push.send_one(t, title.strip() or "Persei", body,
                                          url=url, tag=repo or "tektonix")
         if ok:
             sent += 1

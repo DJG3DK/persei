@@ -41,7 +41,7 @@ from webauthn.helpers.structs import (
 
 from agent.auth import _hash_token
 
-RP_NAME = "Tektonix"
+RP_NAME = "Persei"
 CHALLENGE_TTL_SECONDS = 300
 MAX_PASSKEYS_PER_USER = 10
 NAME_MAX = 60

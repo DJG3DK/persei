@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tektonix installer.
+# Persei installer.
 #
 # Asks for what it cannot derive, derives everything else, and shows you each
 # step before it runs. Safe to re-run: every step checks whether it already
@@ -39,7 +39,7 @@ note() { printf '    %s%s%s\n' "$DIM" "$*" "$N"; }
 
 usage() {
     cat <<'EOF'
-Tektonix installer
+Persei installer
 
   ./install.sh [--dry-run] [--yes] [--help]
 

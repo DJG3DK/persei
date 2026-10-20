@@ -53,7 +53,7 @@ async def test_an_empty_length_capped_reply_is_retried_once_on_the_fallback_seat
     retry = h.requests[1]
     assert retry.model is FALLBACK
     assert isinstance(retry.messages[-1], HumanMessage)
-    assert retry.messages[-1].content.startswith("[Tektonix harness] Your previous attempt ran out of output tokens")
+    assert retry.messages[-1].content.startswith("[Persei harness] Your previous attempt ran out of output tokens")
     assert h.requests[0].messages[-1].content == "fix the parser", "the note is only in the retry request"
     assert mw.retries == 1
 

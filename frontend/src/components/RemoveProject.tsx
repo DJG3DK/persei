@@ -79,7 +79,7 @@ export function RemoveProject({ name, live, open, onOpenChange, onRemoved }: {
     return (
       <div className="rmproj">
         <button type="button" className="rmproj-open" onClick={() => onOpenChange(true)}>
-          Remove from Tektonix
+          Remove from Persei
         </button>
         <span className="rmproj-hint">The repository itself is not affected.</span>
       </div>
@@ -89,7 +89,7 @@ export function RemoveProject({ name, live, open, onOpenChange, onRemoved }: {
   return (
     <div className="rmproj-confirm">
       <p className="rmproj-lead">
-        Tektonix will stop watching <strong>{name}</strong>: its workspace, its deploy key and its
+        Persei will stop watching <strong>{name}</strong>: its workspace, its deploy key and its
         configuration go away.
         {files === "keep"
           ? <> <code>{live}</code> is <strong>not</strong> touched — no files, no branches, no remote.</>
@@ -163,7 +163,7 @@ export function RemoveProject({ name, live, open, onOpenChange, onRemoved }: {
                 <strong>Delete it from this machine</strong>
                 <em>
                   {checkout.removable
-                    ? `For a repository Tektonix cloned and you no longer want here. ${checkout.reason}.`
+                    ? `For a repository Persei cloned and you no longer want here. ${checkout.reason}.`
                     : `Not offered: ${checkout.reason}.`}
                 </em>
               </span>

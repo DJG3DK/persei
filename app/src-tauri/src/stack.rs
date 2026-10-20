@@ -29,7 +29,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub const IMAGES: [&str; 4] = ["agent", "router", "reviewer", "sandbox"];
 pub const REGISTRY: &str = "ghcr.io/djg3dk";
-pub const REPO: &str = "DJG3DK/tektonix";
+pub const REPO: &str = "DJG3DK/persei";
 pub const DASHBOARD: &str = "http://localhost:8100";
 const HEALTH: &str = "http://127.0.0.1:8100/api/health";
 
@@ -49,7 +49,7 @@ pub struct Settings {
     pub openrouter_key_hint: String,
     pub projects_dir: String,
     pub admin_email: String,
-    /// Whose commits these are; blank falls back to "Tektonix" and the
+    /// Whose commits these are; blank falls back to "Persei" and the
     /// sign-in address (docker-compose.yml).
     pub git_name: String,
     pub git_email: String,
@@ -865,7 +865,7 @@ async fn wait_healthy(app: &AppHandle) -> Result<(), String> {
     for i in 0..150 {
         if let Ok(r) = client.get(HEALTH).send().await {
             if r.status().is_success() {
-                note(app, format!("Tektonix is running at {DASHBOARD}"));
+                note(app, format!("Persei is running at {DASHBOARD}"));
                 return Ok(());
             }
         }
@@ -1585,7 +1585,7 @@ mod tests {
     fn the_updater_manifest_lives_on_the_release_not_on_latest() {
         assert_eq!(
             updater_endpoint("v0.9.0-rc6"),
-            "https://github.com/DJG3DK/tektonix/releases/download/v0.9.0-rc6/latest.json"
+            "https://github.com/DJG3DK/persei/releases/download/v0.9.0-rc6/latest.json"
         );
     }
 

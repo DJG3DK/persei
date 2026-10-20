@@ -40,7 +40,7 @@ describe("PasskeysCard", () => {
     const create = vi.fn().mockResolvedValue({ toJSON: () => ({ id: "n", rawId: "n", type: "public-key", response: {} }) });
     Object.defineProperty(navigator, "credentials", { configurable: true, value: { create, get: vi.fn() } });
     passkeyRegisterOptions.mockResolvedValue({ challenge_id: "r1", options: {
-      challenge: "AQID", rp: { id: "agent.example.com", name: "Tektonix" },
+      challenge: "AQID", rp: { id: "agent.example.com", name: "Persei" },
       user: { id: "CQk", name: "d", displayName: "d" }, pubKeyCredParams: [] } });
     passkeyRegisterVerify.mockResolvedValue(PHONE);
     render(<PasskeysCard />);

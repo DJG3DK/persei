@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Tektonix installer for Windows and macOS: the Docker bundle, set up for you.
+    Persei installer for Windows and macOS: the Docker bundle, set up for you.
 
 .DESCRIPTION
     install.sh is the HOST install -- nginx, certbot, pm2, a package manager --
@@ -196,10 +196,10 @@ function Invoke-Step {
 }
 
 <#
-A desktop shortcut to the dashboard, with the Tektonix logo as its icon.
+A desktop shortcut to the dashboard, with the Persei logo as its icon.
 
 The bundle has no program to launch -- the dashboard is a web page -- so a
-shortcut is what a "Tektonix" icon on the desktop can honestly be. A .lnk
+shortcut is what a "Persei" icon on the desktop can honestly be. A .lnk
 whose target is the URL opens the default browser. Replaced every run, so
 a moved checkout or a changed port does not leave a dead icon behind.
 Returns the shortcut path, or $null with a note when it could not be made:
@@ -211,7 +211,7 @@ function New-DesktopShortcut {
         [Parameter(Mandatory)][string]$Url,
         [Parameter(Mandatory)][string]$IconPath,
         [string]$Desktop = [Environment]::GetFolderPath('Desktop'),
-        [string]$Name = 'Tektonix'
+        [string]$Name = 'Persei'
     )
     if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core' -and $env:OS -ne 'Windows_NT') {
         Write-Note 'No desktop shortcut: not Windows.'
@@ -227,7 +227,7 @@ function New-DesktopShortcut {
         $sc = $shell.CreateShortcut($path)
         $sc.TargetPath = $Url
         $sc.IconLocation = "$IconPath,0"
-        $sc.Description = 'Tektonix dashboard'
+        $sc.Description = 'Persei dashboard'
         $sc.Save()
         return $path
     } catch {
@@ -359,7 +359,7 @@ function Main {
     Set-Location $root
 
     Write-Host ""
-    Write-Host "  Tektonix installer" -ForegroundColor Cyan
+    Write-Host "  Persei installer" -ForegroundColor Cyan
     Write-Host "  Sets up the Docker bundle: the agent, its database, the model router"
     Write-Host "  and the review services, all in containers."
 
@@ -458,7 +458,7 @@ function Main {
     }
 
     # Whose commits these are. Prefilled from this machine's git config when
-    # it has one; blank keeps "Tektonix" and the sign-in address.
+    # it has one; blank keeps "Persei" and the sign-in address.
     $gitName = if ($existing.ContainsKey('GIT_USER_NAME')) { $existing['GIT_USER_NAME'] } else { '' }
     $gitEmail = if ($existing.ContainsKey('GIT_USER_EMAIL')) { $existing['GIT_USER_EMAIL'] } else { '' }
     if (-not $gitName -and (Get-Command git -ErrorAction SilentlyContinue)) { $gitName = (git config --global user.name 2>$null) }
@@ -467,7 +467,7 @@ function Main {
         Write-Host ""
         Write-Host '  The agent commits as you. Use the name and email your GitHub account knows.'
     }
-    $gitName = Request-Value -Prompt 'Your name for commits' -Current $gitName -Default 'Tektonix'
+    $gitName = Request-Value -Prompt 'Your name for commits' -Current $gitName -Default 'Persei'
     $gitEmail = Request-Value -Prompt 'Your email for commits' -Current $gitEmail -Default ''
 
     $content = Set-EnvLine -Content $content -Key 'OPENROUTER_API_KEY' -Value $key
@@ -500,15 +500,15 @@ function Main {
     }
     $url = 'http://localhost:8100'
     Write-Host ""
-    Write-Host "  Tektonix is running at $url" -ForegroundColor Green
+    Write-Host "  Persei is running at $url" -ForegroundColor Green
     Write-Host ""
     $adminEmail = if ($existing.ContainsKey('ADMIN_EMAIL') -and $existing['ADMIN_EMAIL']) { $existing['ADMIN_EMAIL'] } else { 'admin@example.com' }
     Write-Note "Sign in as $adminEmail. The one-time password is shown by:"
     Write-Note '  docker compose exec agent python scripts/show_initial_password.py'
     Write-Note 'It works once, and you change the password on first login.'
     Write-Note 'Running this again is safe, and is also how you upgrade.'
-    $icon = Join-Path $root 'frontend\public\tektonix.ico'
-    $shortcut = Invoke-Step "put a Tektonix shortcut on the desktop" { New-DesktopShortcut -Url $url -IconPath $icon }
+    $icon = Join-Path $root 'frontend\public\persei.ico'
+    $shortcut = Invoke-Step "put a Persei shortcut on the desktop" { New-DesktopShortcut -Url $url -IconPath $icon }
     if ($shortcut) { Write-Note "Desktop shortcut: $shortcut" }
     if (-not $Yes) {
         $open = Read-Host 'Open it in your browser now? [Y/n]'

@@ -120,7 +120,7 @@ async def github_poll_now(request: Request, user: User = Depends(require_full_au
 
 
 _APPROVE_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Tektonix · GitHub inbox</title>
+<title>Persei · GitHub inbox</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;background:#0f1220;color:#e6e8f0;margin:0;padding:24px}
 .card{max-width:560px;margin:8vh auto;background:#181c30;border:1px solid #2a3050;border-radius:12px;padding:24px}
 h1{font-size:18px;margin:0 0 12px}p{margin:8px 0}.muted{color:#9aa3c0}.err{color:#ff8a8a}

@@ -221,17 +221,17 @@ describe("LoginPage — navigation", () => {
     // landing page became separate builds on separate hosts, so this is a
     // link rather than a callback.
     renderLogin();
-    const out = screen.getByRole("link", { name: /what is tektonix/i });
-    expect(out).toHaveAttribute("href", "https://tektonix.io");
+    const out = screen.getByRole("link", { name: /what is persei/i });
+    expect(out).toHaveAttribute("href", "https://perseiagent.ai");
   });
 
   it("carries no link to the source — that lives on the public page", () => {
-    // The card has exactly one link, out to tektonix.io. The source link
+    // The card has exactly one link, out to perseiagent.ai. The source link
     // belongs on the page that is actually trying to explain the product.
     renderLogin();
     const links = screen.getAllByRole("link");
     expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute("href", "https://tektonix.io");
+    expect(links[0]).toHaveAttribute("href", "https://perseiagent.ai");
   });
 });
 

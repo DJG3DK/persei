@@ -192,7 +192,7 @@ export function PushPanel() {
   if (isIos() && !isStandalone()) {
     return (
       <p className="push-note">
-        On iPhone and iPad, notifications only work once Tektonix is installed to the
+        On iPhone and iPad, notifications only work once Persei is installed to the
         Home Screen. Open the Share menu and choose <strong>Add to Home Screen</strong>,
         then turn them on from inside the installed app.
       </p>

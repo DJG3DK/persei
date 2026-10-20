@@ -1,4 +1,4 @@
-# Tektonix — https://tektonix.io
+# Persei — https://perseiagent.ai
 #
 # There was no robots.txt here until 2026-09-16, which was worse than having
 # none: the SPA fallback answered /robots.txt with the landing page itself,
@@ -13,4 +13,4 @@ Allow: /
 # Nothing there is indexable and crawling it only burns budget.
 Disallow: /api/
 
-Sitemap: https://tektonix.io/sitemap.xml
+Sitemap: https://perseiagent.ai/sitemap.xml
