@@ -766,9 +766,9 @@ On Windows, install the desktop app: the `Persei_<version>_x64-setup.exe`
 attached to each [release](https://github.com/DJG3DK/persei/releases). It
 installs Docker Desktop if it is missing, asks for your settings in a window,
 pulls the release's images and keeps them updated ([app/README.md](app/README.md)).
-On a Linux desktop, `curl -fsSL https://perseiagent.ai/install-linux.sh | sh`
-installs the same app (or grab the AppImage or .deb from the release). It sets
-up Docker if it's missing and adds itself to your app menu.
+On a Linux desktop, download the same app from [perseiagent.ai](https://perseiagent.ai) (the
+download page also has a one-line installer), or grab the AppImage or .deb from the release. It
+sets up Docker if it's missing and adds itself to your app menu.
 `Install Persei.bat` and `install.ps1` still work for a source checkout
 ([docker/README.md](docker/README.md)). The bundle includes the review gate;
 what it cannot do is restart your app after a merge, because pm2 runs on the

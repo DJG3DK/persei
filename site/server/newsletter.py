@@ -5,8 +5,10 @@ reasoning that moved the page out of the product: a self-hosted Persei has
 no business shipping an endpoint that writes to perseiagent.ai's mailing list.
 `site/` is excluded from the release tarball, and this goes with it.
 
-It does one thing: take a name and an address from the form on the landing
-page and write them down. Nothing sends yet, on purpose.
+Two jobs: take a name and an address from the newsletter form on the landing
+page and write them down (nothing sends yet, on purpose), and stand in front
+of the app downloads, which since 2026-10-21 ask for a name and an address
+first (see "Downloads" below).
 
 No JavaScript at the other end
 ------------------------------
@@ -36,6 +38,9 @@ tailed over someone's shoulder.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import html
 import logging
 import os
 import re
@@ -49,7 +54,7 @@ from urllib.parse import urlsplit
 import httpx
 import psycopg
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from psycopg_pool import AsyncConnectionPool
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -111,6 +116,18 @@ CREATE TABLE IF NOT EXISTS newsletter_subscribers (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     source TEXT
 );
+
+-- One row per download registration, so a returning visitor on a new device
+-- is a second row rather than an overwrite.
+CREATE TABLE IF NOT EXISTS download_registrations (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    wants_updates BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS download_registrations_email ON download_registrations (email);
 """
 
 # Deliberately loose. Address syntax is far stranger than any regex people
@@ -272,19 +289,218 @@ def reset_download_cache() -> None:
     _download_cache.clear()
 
 
+# ── Downloads, behind a name and an address (2026-10-21) ──────────────────────
+#
+# The site's download buttons go to /get/<kind>: a short form (name, email,
+# an unticked "send me updates"). Submitting it stores a row, sets a signed
+# cookie and lands on a page that starts the download and, for Linux, shows
+# the one-line installer. /download/<kind> -- the redirect to GitHub's file --
+# asks for that cookie, so an old bookmark goes through the form too; a
+# returning visitor's cookie skips it.
+#
+# Not a lock: the repository is public, and GitHub's release page hands the
+# same files to anyone. This is for the people who come through the site,
+# which is most of them. The apps' own updates and the one-line installer go
+# to GitHub directly and never pass through here.
+
+_KINDS = {
+    "windows": "Windows",
+    "linux": "Linux",
+    "linux-deb": "Linux (.deb)",
+}
+COOKIE = "persei_dl"
+_COOKIE_MAX_AGE = 365 * 24 * 3600
+# Signs the cookie. From the environment so a restart keeps everyone's; a
+# missing one is a random key for this process -- registrations still work,
+# they are just asked again after the next restart.
+_SECRET = (os.environ.get("DOWNLOAD_COOKIE_SECRET") or "").encode() or secrets.token_bytes(32)
+if not os.environ.get("DOWNLOAD_COOKIE_SECRET"):
+    logger.warning("download: no DOWNLOAD_COOKIE_SECRET; cookies last only until a restart")
+
+
+def _sign(reg_id: int) -> str:
+    body = f"{reg_id}.{int(time.time())}"
+    mac = hmac.new(_SECRET, body.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{body}.{mac}"
+
+
+def _registered(request: Request) -> bool:
+    value = request.cookies.get(COOKIE) or ""
+    try:
+        reg_id, issued, mac = value.split(".")
+        int(reg_id), int(issued)
+    except ValueError:
+        return False
+    want = hmac.new(_SECRET, f"{reg_id}.{issued}".encode(), hashlib.sha256).hexdigest()[:32]
+    return hmac.compare_digest(mac, want) and time.time() - int(issued) < _COOKIE_MAX_AGE
+
+
+async def _download(request: Request, kind: str):
+    if not _registered(request):
+        return RedirectResponse(f"/get/{kind}", status_code=303)
+    return RedirectResponse(await _latest_asset(kind) or RELEASES_PAGE, status_code=302)
+
+
 @app.get("/download/windows")
-async def download_windows():
-    return RedirectResponse(await _latest_asset("windows") or RELEASES_PAGE, status_code=302)
+async def download_windows(request: Request):
+    return await _download(request, "windows")
 
 
 @app.get("/download/linux")
-async def download_linux():
-    return RedirectResponse(await _latest_asset("linux") or RELEASES_PAGE, status_code=302)
+async def download_linux(request: Request):
+    return await _download(request, "linux")
 
 
 @app.get("/download/linux-deb")
-async def download_linux_deb():
-    return RedirectResponse(await _latest_asset("linux-deb") or RELEASES_PAGE, status_code=302)
+async def download_linux_deb(request: Request):
+    return await _download(request, "linux-deb")
+
+
+_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+{head}<title>{title} — Persei</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<style>
+:root{{color-scheme:dark}}
+body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box;
+  background:#11151a;color:#edf0f4;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;
+  background-image:radial-gradient(46% 38% at 12% 4%,rgba(201,162,39,.16),transparent 70%)}}
+main{{width:100%;max-width:440px}}
+.brand{{display:inline-flex;align-items:center;gap:8px;color:#edf0f4;text-decoration:none;font-weight:650;letter-spacing:.18em;font-size:14px;margin-bottom:28px}}
+h1{{font-size:24px;line-height:1.25;margin:0 0 8px}}
+p{{color:#a3adbb;margin:0 0 18px}}
+label{{display:block;font-size:13px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:#a3adbb;margin:16px 0 6px}}
+input[type=text],input[type=email]{{width:100%;box-sizing:border-box;padding:11px 12px;border-radius:6px;border:1px solid #343c48;
+  background:#0d1116;color:#edf0f4;font:inherit}}
+input:focus{{outline:2px solid #c9a227;outline-offset:1px;border-color:#c9a227}}
+.check{{display:flex;gap:10px;align-items:flex-start;text-transform:none;letter-spacing:0;font-weight:400;font-size:15px;color:#edf0f4;margin-top:18px}}
+.check input{{margin-top:5px;accent-color:#c9a227}}
+.hp{{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}}
+button,a.btn{{display:inline-block;margin-top:22px;padding:12px 22px;border-radius:6px;border:0;background:#c9a227;color:#14102e;
+  font:inherit;font-weight:650;text-decoration:none;cursor:pointer}}
+.small{{font-size:13px;color:#8a94a3;margin-top:22px}}
+.small a,a.quiet{{color:#a3adbb}}
+.err{{background:rgba(229,72,77,.12);border:1px solid rgba(229,72,77,.4);color:#f2b8ba;padding:10px 12px;border-radius:6px;font-size:14px}}
+pre{{background:#0d1116;border:1px solid #343c48;border-radius:6px;padding:12px;font-size:13px;color:#edf0f4;white-space:pre-wrap;overflow-wrap:anywhere}}
+ol{{color:#a3adbb;padding-left:20px}}
+</style></head>
+<body><main>
+<a class="brand" href="/"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.8" y="3.8" width="16.4" height="16.4" rx="1.97" fill="#EFBF4E" transform="rotate(45 12 12)"/><path d="M9.44 7.71H12.45A3.02 3.02 0 0 1 12.45 13.74H11.4V16.76H9.44ZM11.4 9.52H12.38A1.21 1.21 0 0 1 12.38 11.93H11.4Z" fill="#0B1426" fill-rule="evenodd"/></svg>PERSEI</a>
+{body}
+</main></body></html>
+"""
+
+_PRIVACY = ("Your name and email are kept so I know who is using Persei. They are not shared or sold, "
+            "and you only get email if you tick the box. To have them deleted, write to "
+            '<a href="mailto:danny@perseiagent.ai">danny@perseiagent.ai</a>.')
+
+
+def _page(title: str, body: str, head: str = "", status: int = 200) -> HTMLResponse:
+    return HTMLResponse(_PAGE.format(title=html.escape(title), body=body, head=head), status_code=status,
+                        headers={"Cache-Control": "no-store"})
+
+
+def _form(kind: str, name: str = "", email: str = "", updates: bool = False, error: str = "",
+          status: int = 200) -> HTMLResponse:
+    label = _KINDS[kind]
+    err = f'<p class="err" role="alert">{html.escape(error)}</p>' if error else ""
+    body = f"""<h1>Download Persei for {html.escape(label)}</h1>
+<p>Tell me who you are and the download starts straight away.</p>
+{err}
+<form method="post" action="/get/{kind}">
+<label for="name">Name</label>
+<input id="name" name="name" type="text" autocomplete="name" required maxlength="120" value="{html.escape(name)}">
+<label for="email">Email</label>
+<input id="email" name="email" type="email" autocomplete="email" required maxlength="254" value="{html.escape(email)}">
+<div class="hp" aria-hidden="true"><label for="{HONEYPOT_FIELD}">Website</label>
+<input id="{HONEYPOT_FIELD}" name="{HONEYPOT_FIELD}" type="text" tabindex="-1" autocomplete="off"></div>
+<label class="check"><input type="checkbox" name="updates" value="1"{" checked" if updates else ""}>
+<span>Send me updates: new releases and what's coming, a few times a year.</span></label>
+<button type="submit">Download</button>
+</form>
+<p class="small">{_PRIVACY}</p>"""
+    return _page(f"Download for {label}", body, status=status)
+
+
+def _ready(kind: str) -> HTMLResponse:
+    """The page the download starts from. A meta refresh, not a script: the
+    redirect it follows ends in a file, so the browser downloads it and stays
+    on this page."""
+    label = _KINDS[kind]
+    head = f'<meta http-equiv="refresh" content="1;url=/download/{kind}">\n'
+    if kind == "windows":
+        extra = """<ol><li>Run the installer</li><li>Let it set up Docker if it asks</li>
+<li>Enter your OpenRouter key and projects folder</li><li>Pick your password and sign in</li></ol>"""
+    else:
+        other = ('<a class="quiet" href="/download/linux-deb">the .deb for Debian / Ubuntu</a>' if kind == "linux"
+                 else '<a class="quiet" href="/download/linux">the AppImage</a>')
+        extra = f"""<p>Or install it with one line, which also adds it to your app menu:</p>
+<pre><code>curl -fsSL {html.escape(SITE_URL)}/install-linux.sh | sh</code></pre>
+<p>Prefer a package? Get {other}.</p>"""
+    body = f"""<h1>Your download is starting</h1>
+<p>Persei for {html.escape(label)}. If nothing happens, <a class="quiet" href="/download/{kind}">download it here</a>.</p>
+{extra}
+<a class="btn" href="/">Back to Persei</a>
+<p class="small">Questions? <a href="mailto:danny@perseiagent.ai">danny@perseiagent.ai</a></p>"""
+    return _page("Your download is starting", body, head=head)
+
+
+@app.get("/get/{kind}")
+async def get_form(request: Request, kind: str):
+    if kind not in _KINDS:
+        return RedirectResponse("/#install", status_code=303)
+    return _ready(kind) if _registered(request) else _form(kind)
+
+
+@app.post("/get/{kind}")
+async def register(request: Request, kind: str, name: str = Form(""), email: str = Form(""),
+                   updates: str = Form(""), website: str = Form("", alias=HONEYPOT_FIELD)):
+    """Store a download registration, then start the download. Never a bare
+    status: there is no script on the page to show one."""
+    if kind not in _KINDS:
+        return RedirectResponse("/#install", status_code=303)
+    wants_updates = updates.strip() == "1"
+    name = " ".join(name.split())[:120]
+    email = email.strip().lower()[:254]
+    if _from_another_site(request):
+        logger.info("download: refused a registration (posted from another site)")
+        return _form(kind, name, email, wants_updates, "That didn't come from this page. Please try again.", 400)
+    if not _subscribe_allowed(_client_ip(request)):
+        logger.info("download: refused a registration (rate limit)")
+        return _form(kind, name, email, wants_updates, "Too many tries from here. Wait a minute and try again.", 429)
+    if website.strip():
+        logger.info("download: dropped a registration (honeypot filled)")
+        return RedirectResponse("/", status_code=303)
+    if not name or not _EMAIL.match(email):
+        return _form(kind, name, email, wants_updates,
+                     "Please enter your name and a real email address." if not name
+                     else "That email address doesn't look right.", 400)
+    if pool is None:
+        logger.error("download: no database, cannot store a registration")
+        return _form(kind, name, email, wants_updates, "Something went wrong on my side. Please try again shortly.", 503)
+    try:
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                "INSERT INTO download_registrations (name, email, platform, wants_updates) "
+                "VALUES (%s, %s, %s, %s) RETURNING id", (name, email, kind, wants_updates))
+            reg_id = (await cur.fetchone())[0]
+            if wants_updates:
+                # The newsletter's own rules: an address already there keeps its
+                # row, and one that unsubscribed stays unsubscribed.
+                await conn.execute(
+                    "INSERT INTO newsletter_subscribers (email, name, unsubscribe_token, source) "
+                    "VALUES (%s, %s, %s, %s) ON CONFLICT (email) DO NOTHING",
+                    (email, name, secrets.token_urlsafe(24), "download"))
+    except psycopg.Error:
+        logger.exception("download: could not store a registration")
+        return _form(kind, name, email, wants_updates, "Something went wrong on my side. Please try again shortly.", 503)
+    logger.info("download: registration stored (%s, updates=%s)", kind, wants_updates)
+    response = RedirectResponse(f"/get/{kind}", status_code=303)
+    response.set_cookie(COOKIE, _sign(reg_id), max_age=_COOKIE_MAX_AGE, httponly=True,
+                        secure=SITE_URL.startswith("https://"), samesite="lax", path="/")
+    return response
 
 
 @app.post("/subscribe")

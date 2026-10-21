@@ -4,6 +4,17 @@ The form at the bottom of [the landing page](../src/LandingPage.tsx) posts
 here. It writes a name and an address down and does nothing else — **nothing
 sends yet**.
 
+It also stands in front of the app downloads (since 2026-10-21). The site's
+download buttons go to `/get/<windows|linux|linux-deb>`: a short form (name,
+email, an unticked "send me updates"), then a page that starts the download
+and shows Linux the one-line installer. Each registration is a row in
+`download_registrations`; ticking the box also adds the address to the
+newsletter. A signed cookie (`DOWNLOAD_COOKIE_SECRET` in `.env`) lets a
+returning visitor skip the form, and `/download/<kind>` without it goes to the
+form. It is not a lock — the repository's release page is public — and the
+apps' updates and the one-liner go to GitHub directly. nginx routes
+`perseiagent.ai/get/` here.
+
 Not part of Persei, for the same reason the landing page is not: a
 self-hosted agent has no business shipping an endpoint that writes to
 perseiagent.ai's mailing list. `site/` is dropped from the release tarball and

@@ -157,20 +157,21 @@ describe("LandingPage", () => {
 
 
 describe("LandingPage — 0.9 install paths", () => {
-  it("offers the Windows installer through this site's own redirect, never a versioned file", () => {
+  it("offers the Windows installer through this site's own download form, never a versioned file", () => {
     render(<LandingPage />);
     const buttons = screen.getAllByRole("link", { name: /download for windows/i });
     expect(buttons.length).toBeGreaterThan(0);
-    buttons.forEach((a) => expect(a).toHaveAttribute("href", "/download/windows"));
+    buttons.forEach((a) => expect(a).toHaveAttribute("href", "/get/windows"));
   });
 
   it("offers the Linux app through the same redirects, AppImage first", () => {
     render(<LandingPage />);
     const appimage = screen.getAllByRole("link", { name: /download (for linux|the appimage)/i });
     expect(appimage.length).toBe(2);
-    appimage.forEach((a) => expect(a).toHaveAttribute("href", "/download/linux"));
-    expect(screen.getByRole("link", { name: /\.deb for debian/i })).toHaveAttribute("href", "/download/linux-deb");
-    expect(document.body.textContent).toContain("curl -fsSL https://perseiagent.ai/install-linux.sh | sh");
+    appimage.forEach((a) => expect(a).toHaveAttribute("href", "/get/linux"));
+    expect(screen.getByRole("link", { name: /\.deb for debian/i })).toHaveAttribute("href", "/get/linux-deb");
+    // The one-liner is shown after registering, on the download page.
+    expect(document.body.textContent).not.toContain("install-linux.sh");
   });
 
   it("covers Windows and Linux, and is honest that there is no Mac build", () => {

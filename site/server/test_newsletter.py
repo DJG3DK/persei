@@ -33,13 +33,18 @@ class FakeCursor:
 
 
 class FakeConn:
-    def __init__(self, store, fail=False):
+    def __init__(self, store, fail=False, regs=None):
         self.store, self.fail = store, fail
+        self.regs = regs if regs is not None else []
 
     async def execute(self, sql, params=None):
         if self.fail and "INSERT" in sql:
             import psycopg
             raise psycopg.OperationalError("no")
+        if "download_registrations" in sql:
+            name, email, platform, wants = params
+            self.regs.append({"name": name, "email": email, "platform": platform, "updates": wants})
+            return FakeCursor([(len(self.regs),)])
         if "INSERT" in sql:
             email, name, token, source = params
             # Models the statement's own conflict rule: DO NOTHING leaves an
@@ -61,10 +66,11 @@ class FakeConn:
 class FakePool:
     def __init__(self, fail=False):
         self.store: dict[str, dict] = {}
+        self.regs: list[dict] = []
         self.fail = fail
 
     def connection(self):
-        return FakeConn(self.store, self.fail)
+        return FakeConn(self.store, self.fail, self.regs)
 
 
 @pytest.fixture(autouse=True)
@@ -360,6 +366,7 @@ def test_the_windows_download_follows_the_latest_full_release(monkeypatch):
     ]})
     monkeypatch.setattr(newsletter.httpx, "AsyncClient", fake)
     with TestClient(newsletter.app) as c:
+        _register(c)
         r = c.get("/download/windows", follow_redirects=False)
         assert r.status_code == 302
         assert r.headers["location"].endswith("/v0.9.0/Persei_0.9.0_x64-setup.exe")
@@ -371,6 +378,7 @@ def test_the_windows_download_falls_back_to_the_release_page(monkeypatch):
     newsletter.reset_download_cache()
     monkeypatch.setattr(newsletter.httpx, "AsyncClient", _FakeGitHub(fail=True))
     with TestClient(newsletter.app) as c:
+        _register(c)
         r = c.get("/download/windows", follow_redirects=False)
     assert r.status_code == 302 and r.headers["location"] == newsletter.RELEASES_PAGE
     newsletter.reset_download_cache()
@@ -378,6 +386,7 @@ def test_the_windows_download_falls_back_to_the_release_page(monkeypatch):
                                      "browser_download_url": "https://evil.example/x.exe"}]})
     monkeypatch.setattr(newsletter.httpx, "AsyncClient", other)
     with TestClient(newsletter.app) as c:
+        _register(c)
         r = c.get("/download/windows", follow_redirects=False)
     assert r.headers["location"] == newsletter.RELEASES_PAGE, "only this repository's release URLs"
 
@@ -392,6 +401,7 @@ def test_the_linux_downloads_follow_the_latest_full_release(monkeypatch):
     ]})
     monkeypatch.setattr(newsletter.httpx, "AsyncClient", fake)
     with TestClient(newsletter.app) as c:
+        _register(c)
         assert c.get("/download/linux", follow_redirects=False).headers["location"] == base + "Persei_0.9.2_amd64.AppImage"
         assert c.get("/download/linux-deb", follow_redirects=False).headers["location"] == base + "Persei_0.9.2_amd64.deb"
         assert c.get("/download/windows", follow_redirects=False).headers["location"] == base + "Persei_0.9.2_x64-setup.exe"
@@ -403,5 +413,94 @@ def test_a_release_without_a_linux_app_sends_linux_to_the_release_page(monkeypat
         {"name": "Persei_0.9.1_x64-setup.exe",
          "browser_download_url": "https://github.com/DJG3DK/persei/releases/download/v0.9.1/Persei_0.9.1_x64-setup.exe"}]}))
     with TestClient(newsletter.app) as c:
+        _register(c)
         r = c.get("/download/linux", follow_redirects=False)
     assert r.headers["location"] == newsletter.RELEASES_PAGE
+
+
+# ── Downloads behind a name and an address (2026-10-21) ──────────────────────
+
+def _register(client, reg_id: int = 1):
+    """A browser that has registered already: it carries the signed cookie."""
+    client.cookies.set(newsletter.COOKIE, newsletter._sign(reg_id))
+
+
+@pytest.fixture
+def pool(monkeypatch):
+    fake = FakePool()
+    monkeypatch.setattr(newsletter, "pool", fake)
+    return fake
+
+
+def _client():
+    # No lifespan: the pool is the fake one the fixture put in place.
+    return TestClient(newsletter.app, base_url="https://perseiagent.ai")
+
+
+def test_a_download_link_without_registering_goes_to_the_form():
+    c = _client()
+    for kind in ("windows", "linux", "linux-deb"):
+        r = c.get(f"/download/{kind}", follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == f"/get/{kind}"
+
+
+def test_the_form_asks_for_a_name_and_an_email_and_leaves_updates_unticked():
+    r = _client().get("/get/windows")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+    page = r.text
+    assert 'name="name"' in page and 'name="email"' in page and 'action="/get/windows"' in page
+    assert 'name="updates"' in page and "checked" not in page, "opting in is the visitor's choice"
+    assert "<script" not in page, "the site ships no JavaScript"
+    assert "danny@perseiagent.ai" in page, "how to have the data deleted"
+
+
+def test_registering_stores_the_row_sets_the_cookie_and_starts_the_download(pool):
+    c = _client()
+    r = c.post("/get/linux", data={"name": "  Ada   Lovelace ", "email": " Ada@Example.com "},
+               follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/get/linux"
+    assert pool.regs == [{"name": "Ada Lovelace", "email": "ada@example.com", "platform": "linux", "updates": False}]
+    assert pool.store == {}, "not on the newsletter without the box ticked"
+    cookie = r.headers["set-cookie"]
+    assert newsletter.COOKIE in cookie and "HttpOnly" in cookie and "Secure" in cookie
+    page = c.get("/get/linux").text
+    assert 'http-equiv="refresh" content="1;url=/download/linux"' in page
+    assert "install-linux.sh | sh" in page, "the one-liner shows once registered"
+    assert c.get("/download/linux", follow_redirects=False).status_code == 302
+
+
+def test_ticking_updates_adds_them_to_the_newsletter(pool):
+    _client().post("/get/windows", data={"name": "Ada", "email": "ada@example.com", "updates": "1"},
+                   follow_redirects=False)
+    assert pool.regs[0]["updates"] is True
+    assert pool.store["ada@example.com"]["source"] == "download"
+
+
+def test_a_bad_entry_shows_the_form_again_with_what_was_typed(pool):
+    r = _client().post("/get/windows", data={"name": "Ada", "email": "not-an-address"})
+    assert r.status_code == 400 and "doesn&#x27;t look right" in r.text
+    assert 'value="not-an-address"' in r.text and pool.regs == []
+    r = _client().post("/get/windows", data={"name": "", "email": "ada@example.com"})
+    assert r.status_code == 400 and pool.regs == []
+
+
+def test_a_typed_value_cannot_break_out_of_the_page(pool):
+    r = _client().post("/get/windows", data={"name": '"><script>alert(1)</script>', "email": "x"})
+    assert "<script>alert" not in r.text
+
+
+def test_bots_and_other_sites_get_nothing_stored(pool):
+    c = _client()
+    r = c.post("/get/windows", data={"name": "Bot", "email": "b@example.com", newsletter.HONEYPOT_FIELD: "x"},
+               follow_redirects=False)
+    assert r.status_code == 303 and pool.regs == [] and newsletter.COOKIE not in r.headers.get("set-cookie", "")
+    r = c.post("/get/windows", data={"name": "Ada", "email": "ada@example.com"},
+               headers={"origin": "https://evil.example"})
+    assert r.status_code == 400 and pool.regs == []
+
+
+def test_a_forged_or_unknown_cookie_does_not_count():
+    c = _client()
+    c.cookies.set(newsletter.COOKIE, "1.1792584140.0000000000000000000000000000000")
+    assert c.get("/download/windows", follow_redirects=False).headers["location"] == "/get/windows"
+    assert c.get("/get/nonsense", follow_redirects=False).status_code == 303

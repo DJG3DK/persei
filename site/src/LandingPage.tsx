@@ -52,9 +52,11 @@ const PIPELINE = [
 
 // Same host as this page; site/server answers with the latest full
 // release's installer, so the link never names a version that goes stale.
-const WINDOWS_DOWNLOAD = "/download/windows";
-const LINUX_DOWNLOAD = "/download/linux";
-const LINUX_DEB_DOWNLOAD = "/download/linux-deb";
+// A short form first (name, email, an opt-in for updates), served by
+// site/server; it starts the download and shows Linux the one-line installer.
+const WINDOWS_DOWNLOAD = "/get/windows";
+const LINUX_DOWNLOAD = "/get/linux";
+const LINUX_DEB_DOWNLOAD = "/get/linux-deb";
 
 const STAGES = [
   {
@@ -503,9 +505,8 @@ export function LandingPage() {
                 too), asking for your password once, and then just carries on: no logging out. Your
                 projects stay owned by you, not root. It updates itself from then on.
               </p>
-              <pre><code>curl -fsSL https://perseiagent.ai/install-linux.sh | sh</code></pre>
               <ol className="lp-steps">
-                <li>Run that, or download the AppImage below and run it once</li>
+                <li>Download the AppImage and run it once (the download page also has a one-line installer)</li>
                 <li>Let it set up Docker if it asks</li>
                 <li>Enter your OpenRouter key and projects folder</li>
                 <li>Pick your password and sign in, and find it in your app menu after that</li>

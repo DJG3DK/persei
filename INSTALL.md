@@ -39,8 +39,8 @@ suite passes on both, against a real Postgres. `install.sh` detects `apt`,
 Windows, macOS, or a one-command Docker install is a different path:
 [docker/README.md](docker/README.md). On Windows, the desktop app (the
 `Persei_<version>_x64-setup.exe` on each release) does it all in a window,
-and on a Linux desktop so does the Linux app
-(`curl -fsSL https://perseiagent.ai/install-linux.sh | sh`);
+and on a Linux desktop so does the Linux app (from
+[perseiagent.ai](https://perseiagent.ai), or the AppImage and .deb on each release);
 `Install Persei.bat` is the same bundle from a source checkout. The bundle
 includes the review gate; deploying your app after a merge is the one thing
 it leaves to the host install.
