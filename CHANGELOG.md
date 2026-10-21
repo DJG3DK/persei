@@ -24,6 +24,8 @@ Also in this release:
   agent fixes it when the fix is small.
 - A GitHub alert whose task finished but didn't actually fix it comes back
   to the inbox, ready for another go.
+- The task list loads quickly again on a slow connection. It had grown to
+  almost a megabyte per refresh; it's a few dozen kilobytes now.
 
 ## v0.9.3 — a clean release
 
