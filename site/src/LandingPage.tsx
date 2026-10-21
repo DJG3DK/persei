@@ -83,6 +83,36 @@ const STAGES = [
   },
 ];
 
+// Memory and reflection: what makes the tenth task on a repo better than the first.
+const LEARNING = [
+  {
+    kicker: "reflect",
+    title: "It stops and thinks after a miss",
+    body: `When the tests fail or the reviewer sends it back, the agent doesn't just try again.
+      It writes down what failed, why, and the one thing to do differently, and starts the next
+      attempt from that. It also sees what it already tried, so it doesn't repeat itself.`,
+  },
+  {
+    kicker: "memory",
+    title: "Each project has its own memory",
+    body: `Every finished task leaves a short record: what was asked, what happened, what it cost,
+      what the reviewer said. Once a day the agent reads the recent ones and keeps what held up,
+      like how this repo runs its tests or which mistake keeps coming back, and drops the noise.`,
+  },
+  {
+    kicker: "recall",
+    title: "“Have we seen this before?”",
+    body: `Months of tasks, transcripts and errors are searchable. When an error looks familiar,
+      the agent can find the time it already solved it instead of starting from zero.`,
+  },
+  {
+    kicker: "freshness",
+    title: "Memory that knows when it's stale",
+    body: `A remembered fact points at the files it came from. When those files change, the fact
+      gets flagged as possibly out of date, so old knowledge doesn't quietly steer new work.`,
+  },
+];
+
 const FEATURES = [
   {
     img: shotLedger,
@@ -120,6 +150,10 @@ const FEATURES = [
 
 // What landed in 0.9. Short on purpose: the changelog has the long version.
 const NEW_IN_09 = [
+  {
+    title: "It learns from a miss",
+    body: "After a failed attempt the agent writes down what went wrong and what to try next, then starts there. Fewer rounds of the same fix.",
+  },
   {
     title: "A real Windows app",
     body: "One installer. It sets up WSL and Docker if you don't have them, asks for your keys in a window, pulls the release and signs you in.",
@@ -202,6 +236,7 @@ export function LandingPage() {
           </a>
           <nav className="lp-nav-links">
             <a href="#how">How it works</a>
+            <a href="#memory">Memory</a>
             <a href="#new">What's new</a>
             <a href="#controls">Controls</a>
             <a href="#install">Install</a>
@@ -289,6 +324,26 @@ export function LandingPage() {
           </div>
           <p className="lp-pullquote">
             &ldquo;The agent saying <em>done</em> doesn&rsquo;t mean it&rsquo;s done.&rdquo;
+          </p>
+        </section>
+
+        <section id="memory" className="lp-section">
+          <h2 className="lp-h2">It learns from its own work</h2>
+          <p className="lp-sub">
+            Most agents start every task from scratch. This one keeps notes, on each project and
+            on its own mistakes, so the tenth task on a repo goes better than the first.
+          </p>
+          <div className="lp-stages lp-stages-4">
+            {LEARNING.map((s) => (
+              <article key={s.kicker} className="lp-stage">
+                <code className="lp-kicker">{s.kicker}</code>
+                <h3>{s.title}</h3>
+                <p>{s.body}</p>
+              </article>
+            ))}
+          </div>
+          <p className="lp-pullquote">
+            &ldquo;A lesson is only trusted once the task that learned it ships.&rdquo;
           </p>
         </section>
 

@@ -7,6 +7,11 @@ runs **Planning Chat**, a separate conversational assistant for research and des
 remembers what it learns across sessions and can hand a finished plan straight to the build
 pipeline.
 
+It **learns from its own work**. After a failed attempt it reflects (what failed, why, what to do
+differently) before trying again; every finished task leaves an episode; once a day those episodes
+are consolidated into each project's memory; and months of past tasks stay searchable, so "have we
+hit this before?" has an answer. See [Memory and reflection](#memory).
+
 The backend is a FastAPI app (`agent/server.py`); the frontend is React/Vite. Together they cover
 submitting and watching build tasks, chatting with Planning Chat, and administering models, users,
 and repos.
@@ -83,7 +88,7 @@ Operating it, rather than reading about it: **[docs/architecture.md](docs/archit
 - [Dashboard](#dashboard)
 - [Telegram alerts](#telegram-alerts)
 - [GitHub inbox](#github-inbox)
-- [Memory](#memory)
+- [Memory and reflection](#memory)
 - [Model routing](#model-routing)
 - [Auth](#auth)
 - [Attachments](#attachments-images-pdfs-csvs)
@@ -503,6 +508,10 @@ policy until the operator sets it explicitly.
 
 ## Memory
 
+Memory and reflection are what make the tenth task on a repo go better than the first: the agent
+keeps notes on each project and on its own failed attempts, and a lesson is only treated as proven
+once a task that used it ships.
+
 Each project has its own persistent memory file, `/memories/AGENTS.md`, backed by the same Postgres
 store as the LangGraph checkpointer. The agent can read and write it directly during normal work,
 and it's shared across every task and planning session for that project. A second file,
@@ -517,8 +526,19 @@ and it's shared across every task and planning session for that project. A secon
   `read_memory_section("all")` returns the whole file. Below the floor a project is not split, since
   the index and the round trip would cost more than they save.
 
+- **Reflection** (`agent/reflection.py`). When an attempt fails — the project's checks, the review
+  gate's NEEDS_FIXES, or GitHub Actions — one short model call (the `agent-planner` seat) writes
+  three lines before the next attempt: `FAILED` (quoted from the output), `BECAUSE` (the wrong
+  assumption behind it) and `NEXT` (the one thing to do differently). That note leads the next
+  attempt's message. The task's earlier reflections go into the call, so a `NEXT` that already
+  failed is not proposed again, and the harness's own results outrank a reviewer's reading of them
+  (a check marked pre-existing is not blamed on the change). The last three are kept on the task
+  and written into its episode. A failed or misshapen call is dropped and the loop goes on as
+  before; the `reflect_on_failure` runtime setting turns it off. Merge conflicts and progress
+  nudges are not reflected on.
 - **Episodic memory** — `verify_and_ship` records a short summary (goal, outcome, cost, review
-  verdict) at the end of every task. Not loaded into context by default; it feeds consolidation.
+  verdict, and the task's reflections) at the end of every task. Not loaded into context by
+  default; it feeds consolidation.
 - **Searchable history** — episodes, task records and build transcripts are indexed for full-text
   search (`agent/history_index.py`), so `search_history` can answer "have we hit this error before"
   across months of work rather than only what consolidation happened to generalise. Records are
@@ -528,7 +548,9 @@ and it's shared across every task and planning session for that project. A secon
 - **Consolidation** (`agent/consolidation.py`, scheduled by the agent itself once a day at the
   first quiet moment, `agent/jobs.py`; `scripts/consolidation-cron.sh` remains for a host install
   that prefers cron) reads a project's recent episodes plus its current memory and
-  distills durable patterns into an updated memory file, skipping one-off noise.
+  distills durable patterns into an updated memory file, skipping one-off noise. Reflections
+  count only as far as they were borne out: a lesson from a task that went on to ship is
+  confirmed, one from a task that escalated is an unproven guess, and the consolidator is told so.
 
   It uses `ProviderStrategy` for structured output, not a bare schema. Passing the schema alone
   resolves to `AutoStrategy`, which picks a **forced tool call** — and every OpenRouter provider for

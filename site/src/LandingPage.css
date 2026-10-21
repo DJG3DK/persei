@@ -422,6 +422,9 @@
   gap: var(--s4);
   margin-top: var(--s7);
 }
+/* Four cards read better as two by two than as three and an orphan. */
+.lp-stages-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 640px) { .lp-stages-4 { grid-template-columns: 1fr; } }
 
 .lp-stage {
   padding: var(--s6);
