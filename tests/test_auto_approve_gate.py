@@ -352,3 +352,31 @@ def test_a_move_onto_a_tracked_file_asks_and_a_rename_to_a_new_name_does_not(wor
         assert _auto_when(worktree)(_req(command)) is False, command
     # Without a repo to ask, a move inside the worktree asks: unknown means ask.
     assert _auto_when()(_req("mv x.ts apps/storefront/src/")) is True
+
+
+# --- heredocs that are only written out (2026-10-21, golden suite) ----------
+
+from agent.deep_agent import _deletions_that_lose_work as _losses  # noqa: E402
+
+_WRITTEN_SCRIPT = ("cd /workspace && mkdir -p .scratch/mut && cat > .scratch/mut/run.sh <<'SH'\n"
+                   "for m in \"$@\"; do\n  d=\".scratch/mut/$m\"\n  rm -rf \"$d\"; mkdir -p \"$d\"\ndone\nSH\n"
+                   "echo written")
+
+
+def test_a_delete_in_a_script_being_written_is_text_not_a_delete():
+    """Two of the first five golden tasks parked on this: the coder wrote a
+    throwaway script with `cat > ... <<'SH'`, and the `rm -rf "$d"` in its
+    text read as a delete about to run."""
+    assert _losses(_WRITTEN_SCRIPT) == []
+    assert _losses(_WRITTEN_SCRIPT.replace("cat > ", "tee ")) == []
+    assert _losses("cat > x.sh <<-EOF\n\trm -rf \"$x\"\n\tEOF\necho ok") == []
+
+
+def test_a_heredoc_a_shell_runs_is_still_read():
+    assert _losses("bash <<'EOF'\nrm -rf src\nEOF") == ["/workspace/src"]
+    assert _losses("ssh box <<EOF\nrm -rf src\nEOF") == ["/workspace/src"]
+
+
+def test_a_delete_outside_the_written_text_is_still_read():
+    assert _losses("cat > x.sh <<EOF\nrm -rf a\nEOF\nrm -rf src") == ["/workspace/src"]
+    assert _losses("rm -rf src && cat > x.sh <<'EOF'\necho hi\nEOF") == ["/workspace/src"]

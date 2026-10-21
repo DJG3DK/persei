@@ -540,12 +540,53 @@ def _expand_local_assignments(command: str) -> str:
     return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", _sub, command)
 
 
+# A heredoc fed to one of these only becomes a file's (or the terminal's)
+# contents: nothing in its body runs. Fed to anything else -- a shell, an
+# interpreter, ssh -- the body may well run, so it stays in for the gate.
+_HEREDOC_TEXT_SINKS = frozenset({"cat", "tee"})
+_HEREDOC_RE = re.compile(r"<<(-?)\s*(?:'([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_][A-Za-z0-9_]*))")
+
+
+def _strip_inert_heredocs(command: str) -> str:
+    """The command without the bodies of heredocs that are only written out.
+
+    2026-10-21, the golden suite: the coder wrote a throwaway mutation-test
+    script with `cat > .scratch/run.sh <<'SH' ... rm -rf "$d" ... SH`, and the
+    gate read the `rm` in the script's TEXT as a delete about to run, could
+    not resolve `$d`, and parked the task on an approval no one was there to
+    give. Two of the first five tasks blocked that way. Writing a script runs
+    none of it; running it later is a separate command, judged then.
+    """
+    lines = command.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        for m in _HEREDOC_RE.finditer(line):
+            # The simple command the heredoc belongs to: text after the last
+            # separator before the operator.
+            before = re.split(r"&&|\|\||;|\||\(", line[:m.start()])[-1].split()
+            if not before or before[0].rsplit("/", 1)[-1] not in _HEREDOC_TEXT_SINKS:
+                continue
+            delimiter = m.group(2) or m.group(3) or m.group(4)
+            strip_tabs = m.group(1) == "-"
+            while i < len(lines):
+                body = lines[i].lstrip("\t") if strip_tabs else lines[i]
+                i += 1
+                if body == delimiter:
+                    break
+            break                                             # one written-out body per line is enough
+    return "\n".join(out)
+
+
 def _deletions_that_lose_work(command: str) -> list[str]:
     """Targets of this command's deletions that are not scratch. Empty means
     nothing of value is being deleted. A target that cannot be read (a shell
     variable, an unparseable segment, `rm` with only flags) is reported, so
     the caller asks about it rather than assuming."""
-    command = _expand_local_assignments(command)
+    command = _expand_local_assignments(_strip_inert_heredocs(command))
     cwd = _SANDBOX_CWD
     # The cwd outside each open subshell: `(cd /tmp); rm -rf x` deletes
     # /workspace/x, because the cd ran in a child that has since exited.
