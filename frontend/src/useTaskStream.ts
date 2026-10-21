@@ -28,6 +28,10 @@ interface StreamState {
   // accepts the connection and just sits there forever, so there's no
   // WS-side signal to detect this from.
   orphaned: boolean;
+  /** The task's whole goal, from its own record. The task list carries only
+   *  a preview of it (agent/routers/tasks.py GOAL_PREVIEW_CHARS). Null until
+   *  the first snapshot arrives. */
+  goal: string | null;
 }
 
 // audit H-16: the log renders unvirtualized, so beyond React.memo (which
@@ -114,6 +118,7 @@ const EMPTY_STATE: StreamState = {
   hydrateError: null,
   idleSeconds: 0,
   orphaned: false,
+  goal: null,
 };
 
 const HYDRATE_MAX_RETRIES = 5;
@@ -213,9 +218,10 @@ export function useTaskStream(taskId: string | null, repo: string | null, genera
               status: meta.status,
               hydrateError: null,
               orphaned,
+              goal: meta.goal ?? s.goal,
             }));
           } else {
-            setState((s) => ({ ...s, status: meta.status, hydrateError: null, orphaned }));
+            setState((s) => ({ ...s, status: meta.status, hydrateError: null, orphaned, goal: meta.goal ?? s.goal }));
           }
           return true;
         } catch (err) {
@@ -262,6 +268,7 @@ export function useTaskStream(taskId: string | null, repo: string | null, genera
         // buffer flushed after a hydrate, or a reconnect that re-sends)
         // must not double an entry.
         log: event.execution_log ? mergeLog(s.log, event.execution_log) : s.log,
+        goal: s.goal,
         plan: event.plan ?? s.plan,
         costSoFar: event.cost_so_far ?? s.costSoFar,
         committedSha: event.committed_sha ?? s.committedSha,

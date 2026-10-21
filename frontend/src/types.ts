@@ -56,6 +56,8 @@ export interface TaskDiff {
 export interface TaskMeta {
   task_id: string;
   goal: string;
+  /** The list sends a preview; the whole goal is on the task's own record. */
+  goal_truncated?: boolean;
   repo: string;
   budget_usd: number;
   status: TaskStatus;

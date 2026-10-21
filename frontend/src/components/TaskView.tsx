@@ -159,7 +159,7 @@ export function TaskView({ task, stream, setGeneration }: Props) {
           {/* The task goal itself opens the conversation, chat-style */}
           <div className="chat-row chat-row--user">
             <div className="chat-bubble chat-bubble--user">
-              <div className="chat-text">{task.goal}</div>
+              <div className="chat-text">{stream.goal ?? task.goal}</div>
             </div>
           </div>
           {hiddenAbove > 0 && (

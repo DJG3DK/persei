@@ -146,9 +146,27 @@ async def list_tasks(request: Request, repo: str | None = None, user: User = Dep
     items = []
     for r in repos:
         results = await read_with_retry(lambda r=r: store.asearch(("tasks", r), limit=50))
-        items.extend(item.value for item in results)
+        items.extend(_list_entry(item.value) for item in results)
     items.sort(key=lambda t: t.get("created_at", 0), reverse=True)
     return items
+
+
+# The dashboard polls this every few seconds. With whole records it had grown
+# to ~900KB (goals carry the inbox alert, earlier attempts and pasted logs;
+# latest_todos the plan), and on a slow connection no poll finished before
+# the next began (2026-10-21). The list shows two lines of a goal, so it
+# gets a preview; the task page reads the whole record from /api/tasks/{id}.
+GOAL_PREVIEW_CHARS = 600
+_LIST_OMITS = ("latest_todos",)
+
+
+def _list_entry(task: dict) -> dict:
+    entry = {k: v for k, v in task.items() if k not in _LIST_OMITS}
+    goal = entry.get("goal")
+    if isinstance(goal, str) and len(goal) > GOAL_PREVIEW_CHARS:
+        entry["goal"] = goal[:GOAL_PREVIEW_CHARS]
+        entry["goal_truncated"] = True
+    return entry
 
 @router.post("/api/tasks/{task_id}/message")
 async def send_message(request: Request, task_id: str, req: SendMessageRequest, user: User = Depends(require_full_auth)):
