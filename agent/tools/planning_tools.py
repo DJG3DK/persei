@@ -116,13 +116,18 @@ async def _browser_page(viewport=None, allow_origin: str | None = None):
             await browser.close()
 
 
-async def _run_web_search(query: str, num_results: int) -> str:
+async def _run_web_search(query: str, num_results: int, session_id: str | None = None) -> str:
     """The search the planning agent (and anything importing this) runs.
     agent/tools/web_search.py: the router's web-search alias, DuckDuckGo as a
     fallback, and an explicit "unavailable" instead of a false "no results".
-    Bing scraping from this box returned empty pages (2026-09-30)."""
+    Bing scraping from this box returned empty pages (2026-09-30).
+
+    `session_id` goes on the router call's ledger line, so a session's total
+    includes what its searches cost (2026-10-22 audit, A23: they landed in
+    routing.jsonl with no owner)."""
     from agent.tools.web_search import web_search  # noqa: PLC0415
-    return await web_search(query, num_results)
+    metadata = {"agent_session_id": session_id} if session_id else None
+    return await web_search(query, num_results, metadata=metadata)
 
 
 def make_browse_page_tool():
@@ -433,6 +438,7 @@ def make_planning_tools(
     skills_manifest: dict[str, str] | None = None,
     is_admin: bool = False,
     actor: str | None = None,
+    session_id: str | None = None,
 ) -> tuple[list, dict]:
     """Returns ([web_search, browse_page, preview_app, list_project_dir,
     read_project_file, search_project, find_files, save_brief, save_plan,
@@ -503,7 +509,7 @@ def make_planning_tools(
         the full page or see what it actually looks like."""
         num_results = max(1, min(num_results, _SEARCH_RESULT_CAP))
         try:
-            return await _run_web_search(query, num_results)
+            return await _run_web_search(query, num_results, session_id)
         except Exception as e:  # noqa: BLE001 -- surfaced to the model as a tool result, not raised
             return f"ERROR: web search failed: {e}"
 

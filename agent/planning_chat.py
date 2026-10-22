@@ -369,7 +369,7 @@ async def build_planning_agent(
     github_tools = [*github_tools, make_github_inbox_tool(store, allowed_repos)]
     planning_tools, plan_ref = make_planning_tools(
         existing_plan, allowed_repos, existing_brief=existing_brief, skills_manifest=skills_manifest,
-        is_admin=is_admin, actor=actor,
+        is_admin=is_admin, actor=actor, session_id=session_id,
     )
 
     # Designing a mark, without exporting one (agent/tools/logo_tools.py).

@@ -336,3 +336,25 @@ def test_create_project_records_the_proposal_and_points_at_the_confirm_card(monk
     assert "Confirm" in result
     assert "Do not call create_project again" in result
     assert "as if the project already exists" in result
+
+
+async def test_web_search_spend_is_attributed_to_the_session(monkeypatch):
+    """2026-10-22 audit, A23: the search's ledger line had no owner, so a
+    session's total missed what its searches cost."""
+    from agent.tools import web_search as ws
+
+    seen = []
+
+    async def search(query, num_results=6, *, metadata=None):
+        seen.append(metadata)
+        return "results"
+
+    monkeypatch.setattr(ws, "web_search", search)
+    tools, _ = make_planning_tools(session_id="s-123")
+    tool = {t.name: t for t in tools}["web_search"]
+    assert await tool.ainvoke({"query": "q"}) == "results"
+    assert seen == [{"agent_session_id": "s-123"}]
+
+    tools, _ = make_planning_tools()
+    await {t.name: t for t in tools}["web_search"].ainvoke({"query": "q"})
+    assert seen[-1] is None, "no session, no tag"
