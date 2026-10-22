@@ -1456,25 +1456,29 @@ async def _bank_planning_turn(
     for another model call, and a title alone is what the sidebar needs.
     """
     try:
-        item = await app.state.store.aget(("planning", repo), session_id)
-        if not item:
-            return
-        meta = {**item.value, "updated_at": time.time(), "turn_active": False}
-        if plan_markdown is not None:
-            meta["plan_markdown"] = plan_markdown
-        if spent is not None:
-            meta["cost_usd"] = spent
-        if brief is not None:
-            meta["brief"] = brief  # same PRESERVE rule: a turn can add or replace a brief, never remove one
-        if new_project is not None:
-            meta["new_project"] = new_project  # a proposal made before the crash is still the operator's to answer
-        if text and not meta.get("title"):
-            meta["title"] = text[:60]
-        if outcome is not None:
-            meta["last_outcome"] = outcome
-            meta["last_outcome_detail"] = outcome_detail
-            meta["last_outcome_at"] = time.time()
-        await app.state.store.aput(("planning", repo), session_id, meta)
+        # Under the meta lock, like every other read-modify-write of this
+        # row: a Build Now carry landing between this read and write lost
+        # carried_cost_usd and built_task_ids (audit B41, 2026-10-22).
+        async with live_state.planning_meta_lock(session_id):
+            item = await app.state.store.aget(("planning", repo), session_id)
+            if not item:
+                return
+            meta = {**item.value, "updated_at": time.time(), "turn_active": False}
+            if plan_markdown is not None:
+                meta["plan_markdown"] = plan_markdown
+            if spent is not None:
+                meta["cost_usd"] = spent
+            if brief is not None:
+                meta["brief"] = brief  # same PRESERVE rule: a turn can add or replace a brief, never remove one
+            if new_project is not None:
+                meta["new_project"] = new_project  # a proposal made before the crash is still the operator's to answer
+            if text and not meta.get("title"):
+                meta["title"] = text[:60]
+            if outcome is not None:
+                meta["last_outcome"] = outcome
+                meta["last_outcome_detail"] = outcome_detail
+                meta["last_outcome_at"] = time.time()
+            await app.state.store.aput(("planning", repo), session_id, meta)
     except Exception:  # noqa: BLE001 -- teardown must never raise over the failure it is cleaning up after
         logger.exception("failed to persist planning progress for session %s", session_id)
     # However the turn ended -- completed, stopped, stalled, out of budget or
@@ -1544,11 +1548,16 @@ async def _run_planning_turn_bg(session_id: str, repo: str, text: str, attachmen
         # is bounded by silence and by budget, not by elapsed time, so treat
         # a marker as stale on the same stall basis rather than a fixed age.
         if meta_item:
-            await app.state.store.aput(("planning", repo), session_id, {
-                **meta_item.value, "difficulty": difficulty,
-                "route": route, "route_reason": _route_decision.reason,
-                "turn_active": True, "turn_started_at": time.time(),
-            })
+            # Re-read under the meta lock (B41): the read above is from
+            # before the classifier calls, and a carry may have landed since.
+            async with live_state.planning_meta_lock(session_id):
+                fresh = await app.state.store.aget(("planning", repo), session_id)
+                if fresh:
+                    await app.state.store.aput(("planning", repo), session_id, {
+                        **fresh.value, "difficulty": difficulty,
+                        "route": route, "route_reason": _route_decision.reason,
+                        "turn_active": True, "turn_started_at": time.time(),
+                    })
         # Seed the turn with the draft this session already has. The agent (and
         # its plan_ref) is rebuilt per turn, so without this the model cannot see
         # its own previous plan and every turn starts from a blank one.
@@ -1667,15 +1676,6 @@ async def _run_planning_turn_bg(session_id: str, repo: str, text: str, attachmen
         # answered (only the confirm/dismiss route clears it).
         new_project = plan_ref.get("new_project") or (meta_item.value.get("new_project") if meta_item else None)
         if meta_item:
-            meta = {
-                **meta_item.value, "updated_at": time.time(),
-                "plan_markdown": effective_plan, "cost_usd": tracker.total_cost,
-                "turn_active": False,
-                "brief": plan_ref.get("brief") or meta_item.value.get("brief"),
-                "new_project": new_project,
-            }
-            if not meta.get("title"):
-                meta["title"] = text[:60]
             # Categorised when the session first has a SAVED PLAN, not on its
             # first message.
             #
@@ -1694,10 +1694,29 @@ async def _run_planning_turn_bg(session_id: str, repo: str, text: str, attachmen
             # movement in the sidebar is a signal rather than noise. It also
             # stops paying the classifier for sessions that never produce a
             # plan. Same fixed taxonomy as a build task (agent/classify.py).
-            if effective_plan and not meta.get("category"):
-                classification = await classify_task(text, config)
-                meta["category"] = classification.category
-            await app.state.store.aput(("planning", repo), session_id, meta)
+            category = None
+            if effective_plan and not meta_item.value.get("category"):
+                category = (await classify_task(text, config)).category
+            # The write is under the meta lock and re-reads the row inside
+            # it, with the classifier call above and outside it: a Build Now
+            # carry landing during that call lost carried_cost_usd and
+            # built_task_ids to this write (audit B41, 2026-10-22).
+            async with live_state.planning_meta_lock(session_id):
+                fresh = await app.state.store.aget(("planning", repo), session_id)
+                if fresh:
+                    new_project = plan_ref.get("new_project") or fresh.value.get("new_project")
+                    meta = {
+                        **fresh.value, "updated_at": time.time(),
+                        "plan_markdown": effective_plan, "cost_usd": tracker.total_cost,
+                        "turn_active": False,
+                        "brief": plan_ref.get("brief") or fresh.value.get("brief"),
+                        "new_project": new_project,
+                    }
+                    if not meta.get("title"):
+                        meta["title"] = text[:60]
+                    if category and not meta.get("category"):
+                        meta["category"] = category
+                    await app.state.store.aput(("planning", repo), session_id, meta)
         await _bank_planning_turn(
             session_id, repo, None, None, outcome="completed"
         )

@@ -353,3 +353,59 @@ async def test_turn_active_marks_the_store_during_and_after(monkeypatch, store):
     await server._run_planning_turn_bg("s1", "demo", "go")
     assert states == [("during", True, True)]
     assert store.value["turn_active"] is False
+
+
+
+async def test_a_build_now_carry_during_the_end_of_turn_classifier_is_kept(monkeypatch, store):
+    """B41 (2026-10-22): the end-of-turn write built its row from a read
+    taken before `await classify_task`, without the meta lock, so a Build
+    Now carry landing during that call lost carried_cost_usd and
+    built_task_ids."""
+    from agent import tasks
+
+    plan_ref: dict = {"markdown": None}
+
+    async def _difficulty(_text, _config):
+        return "easy"
+
+    async def _build(*_a, **_kw):
+        return object(), plan_ref, _Tracker(0.75)
+
+    async def _run(_agent, ref, _thread, _text, _publish, tracker=None):
+        ref["markdown"] = "# Plan v2"
+        return "# Plan v2"
+
+    async def _classify(_text, _config):
+        await tasks.carry_planning_cost(store, "demo", "s1", "t9")    # Build Now, mid-call
+        return TaskClassification(category="feature", needs_tests=False)
+
+    monkeypatch.setattr(server, "classify_planning_difficulty", _difficulty)
+    monkeypatch.setattr(server, "build_planning_agent", _build)
+    monkeypatch.setattr(server, "run_planning_turn", _run)
+    monkeypatch.setattr(server, "classify_task", _classify)
+    monkeypatch.setattr(server, "_publish_planning", lambda *_a: None)
+    await server._run_planning_turn_bg("s1", "demo", "go")
+    assert store.value["built_task_ids"] == ["t9"] and store.value["carried_cost_usd"] == 0.25
+    assert store.value["category"] == "feature" and store.value["plan_markdown"] == "# Plan v2"
+
+
+async def test_a_carry_during_teardown_is_kept(monkeypatch, store):
+    """B41: _bank_planning_turn read and wrote the row outside the lock."""
+    from agent import tasks
+
+    real_aget, real_aput = store.aget, store.aput
+
+    async def slow_aget(ns, key):
+        await asyncio.sleep(0.02)
+        return await real_aget(ns, key)
+
+    async def slow_teardown_write(ns, key, value):
+        if "turn_active" in value:          # the teardown's write lands after the carry's
+            await asyncio.sleep(0.05)
+        await real_aput(ns, key, value)
+
+    monkeypatch.setattr(store, "aget", slow_aget)
+    monkeypatch.setattr(store, "aput", slow_teardown_write)
+    await asyncio.gather(server._bank_planning_turn("s1", "demo", None, 0.40),
+                         tasks.carry_planning_cost(store, "demo", "s1", "t9"))
+    assert store.value["built_task_ids"] == ["t9"], "the teardown wrote the carry away"
