@@ -31,50 +31,70 @@ overlapping restart sees the same slots, and Postgres drops a claim when its con
 
 <table>
 <tr>
-<td width="50%"><img src="site/src/assets/shots/models2.webp" alt="Model Configuration — build pipeline roles"></td>
-<td width="50%"><img src="site/src/assets/shots/analytics2.webp" alt="Analytics — spend, outcomes, review cost and runs"></td>
+<td width="50%"><img src="site/src/assets/shots/task.webp" alt="A task running live — tool calls, output, the agent's summary and the review gate's verdict"></td>
+<td width="50%"><img src="site/src/assets/shots/analytics.webp" alt="Analytics — spend, outcomes, benchmarks, review cost and runs"></td>
+</tr>
+<tr>
+<td><b>Watch a task work.</b> Every tool call and its output as it happens, which model made
+it, the agent's own summary, and the review gate's READY or NEEDS_FIXES at the end. You can
+nudge it mid-task from the box at the bottom.</td>
+<td><b>What it cost and whether it's getting better.</b> Spend against your balance, outcomes,
+fix cycles, a benchmarks row comparing the last two weeks with the two before, and the review
+gate's own bill, from this box's router ledger. No tracing service.</td>
+</tr>
+<tr>
+<td><img src="site/src/assets/shots/inbox.webp" alt="GitHub inbox — security alerts and Dependabot pull requests"></td>
+<td><img src="site/src/assets/shots/benchmarks.webp" alt="Benchmarks — SWE-bench Verified runs"></td>
+</tr>
+<tr>
+<td><b>GitHub alerts become tasks.</b> Security alerts, code scanning and Dependabot pull
+requests in one inbox. Approve one and it's a task; alerts on the same package arrive as one
+item, and one the fix didn't close comes back.</td>
+<td><b>Benchmarks you can rerun.</b> The golden suite and SWE-bench Verified run from the
+dashboard. Each run keeps its score, cost, models, notes and what the host was doing.</td>
+</tr>
+<tr>
+<td><img src="site/src/assets/shots/models-pipeline.webp" alt="Model configuration — build pipeline roles"></td>
+<td><img src="site/src/assets/shots/settings-auto.webp" alt="Settings — auto mode"></td>
 </tr>
 <tr>
 <td><b>Every role is a named alias you can repin.</b> Planner, coder, frontend coder,
-investigator and test-writer each show what the role needs, live pricing and an optional
-pinned provider, so a swap is one dropdown rather than a config edit.</td>
-<td><b>What it cost and what came of it.</b> Spend against your API balance, average fix
-cycles per task, outcomes split into done / stopped / escalated, the review gate's own bill
-per repo, and per-task runs from this box's router ledger — no tracing service required.</td>
-</tr>
-<tr>
-<td><img src="site/src/assets/shots/models3.webp" alt="Commit reviewer with probe results, and the planning chat tiers"></td>
-<td><img src="site/src/assets/shots/analytics3.webp" alt="Analytics — cost by category and repo, model usage by role"></td>
-</tr>
-<tr>
-<td><b>Models are probed, not assumed.</b> The reviewer is marked strict — it forces one
-tool call — and its card says which models actually pass that, and when they were last
-probed, so you find out here rather than mid-task.</td>
-<td><b>Where the tokens actually went.</b> Spend by the kind of work and by repo, then
-per-role model usage with call counts, tokens, latency, cost and cache hit rate, so an
-expensive role is visible instead of inferred.</td>
-</tr>
-<tr>
-<td><img src="site/src/assets/shots/models4.webp" alt="Classifier and support roles"></td>
-<td><img src="site/src/assets/shots/users2.webp" alt="Users — per-project access"></td>
-</tr>
-<tr>
-<td><b>Support roles carry the badge their job requires.</b> The classifier needs structured
-output and nothing else; summarizer, vision and cartographer are plain completions, so the
-cheapest tier is genuinely fine there.</td>
-<td><b>A second person gets exactly the projects you tick.</b> Each user sees and works on
-the repos they are allowed, and nothing else; the admin has every one.</td>
+investigator and test-writer each say what the role needs, with live pricing and an optional
+pinned provider. A swap is one dropdown.</td>
+<td><b>Hands-off, with lines it won't cross.</b> Auto mode lets a task finish without you,
+per project. It still asks before a delete that would lose work, and when it has a question for
+you.</td>
 </tr>
 </table>
 
 <details>
-<summary>More: starting a planning session</summary>
+<summary>More: model probes, support roles, tool reliability, planning</summary>
+
+<img src="site/src/assets/shots/models-probes.webp" alt="A role card listing the models verified to work and to fail">
+
+**Models are probed, not assumed.** A constrained role says which models passed its probes
+and which failed, and when they were last probed.
+
+<img src="site/src/assets/shots/models-support.webp" alt="Classifier and summarizer roles">
+
+**Cheap jobs get cheap models.** The classifier needs structured output and nothing else; the
+summarizer is a plain completion, so the cheapest tier is fine.
+
+<img src="site/src/assets/shots/analytics-tools.webp" alt="Model usage by role and tool-call reliability">
+
+**Where the tokens went, and which tools fail.** Per-role calls, tokens, latency, cost and cache
+rate, then tool-call errors by tool and by day.
+
+<img src="site/src/assets/shots/benchmarks-host.webp" alt="A benchmark run's host metrics and per-task results">
+
+**What the machine was doing.** Memory, model calls in flight, latency and containers across a
+benchmark run, then every task's result.
 
 <img src="site/src/assets/shots/dashboard2.webp" alt="Plan a project — repo and model route pickers">
 
-A planning session starts from a repo and a model route. Auto detects frontend work and
-sends it to the frontend seat; the session remembers what it learns about the project
-between sessions, and **Build Now** hands the finished plan straight to a build task.
+**Plan first.** A planning session starts from a repo and a model route. It remembers what it
+learns about the project between sessions, and **Build Now** hands the finished plan to a build
+task.
 
 </details>
 

@@ -1,11 +1,13 @@
 import logoUrl from "./assets/persei-logo.png";
 import { SKY_FAR, SKY_MAIN, SKY_NEAR } from "./constellation";
-import shotPipeline from "./assets/shots/models2.webp";
-import shotAnalytics from "./assets/shots/analytics2.webp";
-import shotLedger from "./assets/shots/analytics3.webp";
-import shotReviewer from "./assets/shots/models3.webp";
-import shotSupport from "./assets/shots/models4.webp";
-import shotUsers from "./assets/shots/users2.webp";
+import shotTask from "./assets/shots/task.webp";
+import shotAnalytics from "./assets/shots/analytics.webp";
+import shotLedger from "./assets/shots/analytics-tools.webp";
+import shotReviewer from "./assets/shots/models-probes.webp";
+import shotSupport from "./assets/shots/models-support.webp";
+import shotInbox from "./assets/shots/inbox.webp";
+import shotBenchmarks from "./assets/shots/benchmarks.webp";
+import shotAuto from "./assets/shots/settings-auto.webp";
 import shotPlanning from "./assets/shots/dashboard2.webp";
 import "./LandingPage.css";
 
@@ -118,7 +120,7 @@ const LEARNING = [
 const FEATURES = [
   {
     img: shotLedger,
-    alt: "Analytics — per-role model usage with call counts, tokens, latency, cost and cache rate",
+    alt: "Analytics — per-role model usage with calls, tokens, latency, cost and cache rate, and tool-call reliability",
     title: "See where the money actually went",
     body: `Every role's real usage, straight from the router's own per-call ledger: calls,
       tokens, latency, cost, and how much came from cache. If a role is burning money, you see it
@@ -126,27 +128,43 @@ const FEATURES = [
   },
   {
     img: shotReviewer,
-    alt: "The commit reviewer's role, showing how many probed models meet its requirements",
+    alt: "The consolidator's role card, listing the models verified to work and the ones verified to fail",
     title: "Models get tested before you pin them",
-    body: `The reviewer needs strict tool calling and a forced response shape, and most models
-      can't do both. Each role only lists the models that actually passed its probes, so you find
+    body: `Some roles need strict tool calling and a forced response shape, and most models
+      can't do both. Each role says which models passed its probes and which failed, so you find
       out on this page, not four minutes into a task.`,
   },
   {
     img: shotSupport,
-    alt: "Support roles — classifier, summarizer, vision and cartographer, each with capability badges",
+    alt: "Support roles — the classifier and the summarizer, each on its own cheap model",
     title: "Cheap jobs get cheap models",
     body: `Classifying a task or summarising a log doesn't need the model that writes your code,
       and paying coder prices for it is just waste. Every support role is pinned on its own and
       says what it actually needs.`,
   },
   {
-    img: shotUsers,
-    alt: "Users — per-project access control and adding a user",
-    title: "People see the projects they need",
-    body: `An account is scoped to the projects you give it, and everything follows that: tasks,
-      planning, analytics. You see everything; someone you add for one repo can't start work on
-      another.`,
+    img: shotInbox,
+    alt: "The GitHub inbox — security alerts and Dependabot pull requests waiting for a decision",
+    title: "GitHub alerts become tasks",
+    body: `Security alerts, code scanning and Dependabot pull requests land in one inbox. Approve
+      one and it becomes a task; alerts on the same package arrive as one item, not eleven. If the
+      fix didn't close it, it comes back.`,
+  },
+  {
+    img: shotBenchmarks,
+    alt: "Benchmarks — SWE-bench Verified runs with their scores, costs and notes",
+    title: "Benchmarks you can rerun",
+    body: `A golden suite of its own and SWE-bench Verified, both run from the dashboard. Every
+      run is kept: what it scored, what it cost, which models it used, and what the machine was
+      doing while it ran.`,
+  },
+  {
+    img: shotAuto,
+    alt: "Settings — auto mode, with the deletes and questions it still always asks about",
+    title: "Hands-off, with lines it won't cross",
+    body: `Auto mode lets a task finish without you, project by project. It still stops for a
+      delete that would lose work and for a question it needs you to answer, and the review gate
+      and the budget don't change.`,
   },
 ];
 
@@ -305,7 +323,7 @@ export function LandingPage() {
             <div className="lp-chrome" aria-hidden="true">
               <span /> <span /> <span />
             </div>
-            <img src={shotPipeline} alt="Model configuration — the build pipeline roles, each with its own pinned model and live pricing" />
+            <img src={shotTask} alt="A task running live — the agent's tool calls and their output, its summary, and the review gate's READY verdict" />
           </figure>
         </section>
 
@@ -363,13 +381,14 @@ export function LandingPage() {
               </div>
               <img
                 src={shotAnalytics}
-                alt="The dashboard — spend, outcomes and per-repo cost, with planning sessions and tasks grouped by category in the sidebar"
+                alt="Analytics — spend, outcomes, benchmarks against the previous two weeks, the review gate's own cost, and runs"
               />
             </div>
             <figcaption>
               Planning sessions and tasks share one sidebar, grouped by kind, filterable by repo,
               with anything waiting on you pinned at the top. Spend, outcomes and fix cycles are
-              up front, and the review gate&rsquo;s cost is counted separately from the
+              up front, then a row that says whether the agent is getting better than it was two
+              weeks ago, and the review gate&rsquo;s cost counted separately from the
               agent&rsquo;s. Your remaining credit turns red under 15%, so you see it coming.
             </figcaption>
           </figure>
