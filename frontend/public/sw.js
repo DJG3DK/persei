@@ -140,6 +140,17 @@ function isApi(url) {
   return url.pathname === '/api' || url.pathname.startsWith('/api/');
 }
 
+// Every copy is stored as '/', so only a page that IS the console may replace
+// it. Until 2026-10-22 (audit U24) any navigation did: opening /_review/ (the
+// admin review dashboard, authenticated) or an icon URL put that page on disk
+// as the console, and the next offline launch showed it instead.
+function isConsoleShell(url, res) {
+  if (url.pathname === '/_review' || url.pathname.startsWith('/_review/')) return false;
+  if (/\.[A-Za-z0-9]+$/.test(url.pathname)) return false;
+  const type = (res.headers && res.headers.get('content-type')) || '';
+  return type.toLowerCase().startsWith('text/html');
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -154,7 +165,7 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((res) => {
-          if (res && res.ok) {
+          if (res && res.ok && isConsoleShell(url, res)) {
             const copy = res.clone();
             caches.open(SHELL).then((c) => c.put('/', copy)).catch(() => undefined);
           }

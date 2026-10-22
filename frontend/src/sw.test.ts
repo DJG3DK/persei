@@ -9,7 +9,10 @@ const ORIGIN = "https://tektonix.example";
 
 type Listener = (event: Record<string, unknown>) => void;
 
-function loadWorker() {
+function loadWorker(
+  cacheApi: Record<string, unknown> = {},
+  fetchFn: (req: unknown) => Promise<unknown> = () => Promise.reject(new Error("offline")),
+) {
   const listeners: Record<string, Listener> = {};
   const self = {
     location: { origin: ORIGIN },
@@ -23,7 +26,7 @@ function loadWorker() {
     skipWaiting: vi.fn(),
   };
   const src = readFileSync(join(__dirname, "..", "public", "sw.js"), "utf8");
-  new Function("self", "caches", "fetch", src)(self, {}, () => Promise.reject(new Error("offline")));
+  new Function("self", "caches", "fetch", src)(self, cacheApi, fetchFn);
   return { self, listeners };
 }
 
@@ -77,5 +80,41 @@ describe("service worker notification targets", () => {
     });
     await pending;
     expect(self.registration.showNotification.mock.calls[0][1].data.url).toBe("/");
+  });
+});
+
+describe("service worker offline shell", () => {
+  /* Audit U24 (2026-10-22): every navigation used to be stored as "/", so
+   * opening /_review/ replaced the console's offline copy with the admin
+   * dashboard. */
+  async function navigate(path: string, contentType: string) {
+    const put = vi.fn(async (_key: string, _res: unknown) => undefined);
+    const cacheApi = { open: vi.fn(async () => ({ put })), match: vi.fn(async () => undefined) };
+    const res = {
+      ok: true,
+      headers: new Headers({ "content-type": contentType }),
+      clone() { return this; },
+    };
+    const { listeners } = loadWorker(cacheApi, async () => res);
+    let answer: Promise<unknown> = Promise.resolve();
+    listeners.fetch({
+      request: { method: "GET", url: `${ORIGIN}${path}`, mode: "navigate" },
+      respondWith: (p: Promise<unknown>) => { answer = p; },
+    });
+    await answer;
+    await new Promise((r) => setTimeout(r, 0));
+    return put.mock.calls.length;
+  }
+
+  it.each([
+    ["/", "text/html; charset=utf-8", 1],
+    ["/task/abc", "text/html", 1],
+    ["/_review/", "text/html", 0],
+    ["/_review", "text/html", 0],
+    ["/icon-192.png", "image/png", 0],
+    ["/manifest.webmanifest", "text/html", 0],
+    ["/settings", "application/json", 0],
+  ])("a navigation to %s (%s) is stored as the shell %i time(s)", async (path, type, puts) => {
+    expect(await navigate(path, type)).toBe(puts);
   });
 });
