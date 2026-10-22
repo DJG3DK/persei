@@ -38,14 +38,23 @@ pub fn installed_path(data_home: &Path) -> PathBuf {
 }
 
 /// A path as a desktop-entry Exec argument: double-quoted, with the four
-/// characters the specification reserves inside quotes escaped.
+/// characters the specification reserves inside quotes escaped, and `%`
+/// doubled so it is not read as a field code. The value is a string first,
+/// whose own escaping turns `\\` into `\`, so every quoting backslash is
+/// written twice: `\\$` for `$`, four for one backslash (the
+/// specification's own examples).
 pub fn exec_arg(path: &Path) -> String {
     let mut out = String::from("\"");
     for c in path.display().to_string().chars() {
-        if matches!(c, '"' | '`' | '$' | '\\') {
-            out.push('\\');
+        match c {
+            '"' | '`' | '$' => {
+                out.push_str("\\\\");
+                out.push(c);
+            }
+            '\\' => out.push_str("\\\\\\\\"),
+            '%' => out.push_str("%%"),
+            _ => out.push(c),
         }
-        out.push(c);
     }
     out.push('"');
     out
@@ -212,7 +221,12 @@ mod tests {
     #[test]
     fn the_menu_entry_matches_the_debs_and_quotes_its_path() {
         let e = desktop_entry(Path::new("/home/o\"b $x/Tektonix.AppImage"));
-        assert!(e.contains("Exec=\"/home/o\\\"b \\$x/Tektonix.AppImage\" %U\n"));
+        assert!(e.contains("Exec=\"/home/o\\\\\"b \\\\$x/Tektonix.AppImage\" %U\n"));
+        assert_eq!(
+            exec_arg(Path::new("/h/a\\b/100%/`c`")),
+            r#""/h/a\\\\b/100%%/\\`c\\`""#,
+            "a backslash is four, a percent sign two"
+        );
         assert!(e.contains("StartupWMClass=persei\n") && e.contains("Icon=persei\n"));
         assert!(e.contains("Name=Persei\n"));
         assert!(e.contains("Categories=Development;\n"));

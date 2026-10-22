@@ -254,13 +254,11 @@ pub fn pkexec_failure(e: &proc::ProcError, what: &str) -> String {
 /// This account's login name.
 #[cfg(target_os = "linux")]
 async fn account() -> Result<String, String> {
-    let name = match std::env::var("USER") {
-        Ok(u) if !u.is_empty() => u,
-        _ => proc::capture("id", &["-un"], None)
-            .await
-            .map_err(|e| e.to_string())?
-            .trim()
-            .to_string(),
+    // The passwd entry of the uid this runs as, before $USER: the variable
+    // is whatever the environment says, and the name goes to usermod.
+    let name = match proc::capture("id", &["-un"], None).await {
+        Ok(u) if !u.trim().is_empty() => u.trim().to_string(),
+        _ => std::env::var("USER").unwrap_or_default(),
     };
     if plain_account(&name) {
         Ok(name)

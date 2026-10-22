@@ -333,3 +333,5 @@ def test_the_updater_key_is_never_in_a_build_and_signing_tools_are_pinned():
 def test_ci_builds_the_app_in_a_container_pinned_by_digest():
     wf = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text())
     assert re.fullmatch(r"ivangabriele/tauri:[\w.-]+@sha256:[0-9a-f]{64}", wf["jobs"]["app"]["container"])
+    runs = [s.get("run", "") for s in wf["jobs"]["app"]["steps"]]
+    assert "cargo test --locked" in runs and any(r.startswith("cargo clippy --locked") for r in runs)
