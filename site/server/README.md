@@ -53,9 +53,12 @@ make pm2 load a `.js` config as ESM and die on `module.exports`.
 
 ## The data
 
-One table, `newsletter_subscribers`, in whatever database `NEWSLETTER_PG_DSN`
-names — by default the one the agent already uses, because that is what
-`pg_dump` already backs up (`docs/backup.md`).
+Two tables, `newsletter_subscribers` and `download_registrations`, in
+whatever database `NEWSLETTER_PG_DSN` names — by default the one the agent
+already uses, because that is what `pg_dump` already backs up
+(`docs/backup.md`).
+
+`newsletter_subscribers`:
 
 | column | why |
 |---|---|
@@ -63,6 +66,26 @@ names — by default the one the agent already uses, because that is what
 | `unsubscribe_token` | every issue needs an unsubscribe link; minted now so the first send does not have to backfill one for everybody |
 | `confirmed_at` | null until there is a double opt-in, which needs a mail to confirm *with*. The column exists so adding it later is a write rather than a migration |
 | `unsubscribed_at` | set instead of deleting the row, so a later signup does not silently re-add somebody who left |
+
+`download_registrations`, one row per registration on the download form, so a
+returning visitor on a new device is a second row rather than an overwrite:
+
+| column | why |
+|---|---|
+| `name`, `email` | what the form collects |
+| `platform` | `windows`, `linux` or `linux-deb` |
+| `wants_updates` | the unticked box; ticking it also adds a `newsletter_subscribers` row with `source = 'download'` |
+
+Registering sets one cookie, `persei_dl`: the registration's id and issue
+time, HMAC-signed with `DOWNLOAD_COOKIE_SECRET`, for 365 days. No name or
+address is in it.
+
+**Retention**, as the privacy page (`site/public/privacy/`) states it: a
+download registration is deleted 24 months after it was made, and an
+unsubscribed address 24 months after it unsubscribed. A current subscriber is
+kept. The service deletes them itself, at startup and hourly
+(`purge_expired`); `test_newsletter.py` fails if the page and the constants
+disagree.
 
 Addresses are never written to the log. A log line is the easiest way for a
 mailing list to leak, and it would leak into a file people tail.

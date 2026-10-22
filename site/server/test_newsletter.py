@@ -504,3 +504,62 @@ def test_a_forged_or_unknown_cookie_does_not_count():
     c.cookies.set(newsletter.COOKIE, "1.1792584140.0000000000000000000000000000000")
     assert c.get("/download/windows", follow_redirects=False).headers["location"] == "/get/windows"
     assert c.get("/get/nonsense", follow_redirects=False).status_code == 303
+
+
+# ── What the privacy page promises (2026-10-22, audit S3) ────────────────────
+
+PRIVACY_PAGE = Path(__file__).resolve().parent.parent / "public" / "privacy" / "index.html"
+
+
+def test_the_privacy_page_names_the_download_cookie_its_lifetime_and_the_retention():
+    """The page said "no cookies" while the download form set a year-long one,
+    and it gave no retention period while both tables were kept forever."""
+    page = PRIVACY_PAGE.read_text(encoding="utf-8")
+    assert newsletter.COOKIE in page
+    assert f"{newsletter._COOKIE_MAX_AGE // 86400} days" in page
+    assert f"{newsletter.RETENTION_MONTHS} months" in page
+    assert "(no cookies" not in page, "the old blanket claim"
+    assert newsletter._COOKIE_MAX_AGE < newsletter.RETENTION_MONTHS * 30 * 86400, \
+        "a live cookie must not outlive its registration"
+
+
+class _RecordingPool(FakePool):
+    def __init__(self, fail=False):
+        super().__init__()
+        self.sql: list[tuple[str, tuple]] = []
+        self.purge_fail = fail
+
+    def connection(self):
+        outer = self
+
+        class C(FakeConn):
+            async def execute(self, sql, params=None):
+                if outer.purge_fail:
+                    import psycopg
+                    raise psycopg.OperationalError("down")
+                outer.sql.append((" ".join(sql.split()), params))
+                return FakeCursor([])
+
+        return C(self.store)
+
+
+def test_the_purge_deletes_old_registrations_and_long_unsubscribed_rows(monkeypatch):
+    import asyncio
+
+    pool = _RecordingPool()
+    monkeypatch.setattr(newsletter, "pool", pool)
+    asyncio.run(newsletter.purge_expired())
+    statements = [s for s, _ in pool.sql]
+    assert any(s.startswith("DELETE FROM download_registrations WHERE created_at <") for s in statements)
+    subs = [s for s in statements if s.startswith("DELETE FROM newsletter_subscribers")]
+    assert subs and "unsubscribed_at IS NOT NULL" in subs[0], "a current subscriber is never purged"
+    assert all(p == (newsletter.RETENTION_MONTHS,) for _, p in pool.sql)
+
+
+def test_a_failed_purge_is_logged_not_raised(monkeypatch, caplog):
+    import asyncio
+
+    monkeypatch.setattr(newsletter, "pool", _RecordingPool(fail=True))
+    with caplog.at_level("ERROR"):
+        asyncio.run(newsletter.purge_expired())
+    assert "purge" in caplog.text

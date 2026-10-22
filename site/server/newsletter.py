@@ -38,6 +38,7 @@ tailed over someone's shoulder.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import html
@@ -212,6 +213,41 @@ def _from_another_site(request: Request) -> bool:
 
 pool: AsyncConnectionPool | None = None
 
+# What the privacy page promises (site/public/privacy/, and a test holds the
+# two together). Until 2026-10-22 both tables were kept forever while the page
+# gave no period at all (audit S3). A download registration goes 24 months
+# after it was made -- twice the cookie's life, so no live cookie outlives its
+# row. A subscriber stays while subscribed; an unsubscribed row is kept that
+# long only so a stray signup cannot re-add them (S1), then it goes too.
+RETENTION_MONTHS = 24
+_PURGE_SQL = (
+    "DELETE FROM download_registrations WHERE created_at < now() - make_interval(months => %s)",
+    "DELETE FROM newsletter_subscribers "
+    "WHERE unsubscribed_at IS NOT NULL AND unsubscribed_at < now() - make_interval(months => %s)",
+)
+# At startup and hourly: the process runs for weeks, and nothing else here
+# keeps time.
+_PURGE_EVERY_S = 3600
+
+
+async def purge_expired() -> None:
+    """Delete what is past the retention period. A failure is logged and
+    retried next hour; it must not take the form down."""
+    if pool is None:
+        return
+    try:
+        async with pool.connection() as conn:
+            for sql in _PURGE_SQL:
+                await conn.execute(sql, (RETENTION_MONTHS,))
+    except psycopg.Error:
+        logger.exception("purge: could not delete expired rows")
+
+
+async def _purge_forever() -> None:
+    while True:
+        await purge_expired()
+        await asyncio.sleep(_PURGE_EVERY_S)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -224,10 +260,12 @@ async def lifespan(app: FastAPI):
     await pool.open(wait=True)
     async with pool.connection() as conn:
         await conn.execute(_SCHEMA)
+    purger = asyncio.create_task(_purge_forever())
     logger.info("newsletter: ready on :%s", PORT)
     try:
         yield
     finally:
+        purger.cancel()
         await pool.close()
 
 
@@ -392,8 +430,9 @@ ol{{color:#a3adbb;padding-left:20px}}
 </main></body></html>
 """
 
-_PRIVACY = ("Your name and email are kept so I know who is using Persei. They are not shared or sold, "
-            "and you only get email if you tick the box. To have them deleted, write to "
+_PRIVACY = ("Your name and email are kept for 24 months so I know who is using Persei. They are not "
+            "shared or sold, and you only get email if you tick the box. A cookie remembers that you "
+            'registered (<a href="/privacy/">privacy</a>). To have them deleted sooner, write to '
             '<a href="mailto:danny@perseiagent.ai">danny@perseiagent.ai</a>.')
 
 

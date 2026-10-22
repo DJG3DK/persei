@@ -19,6 +19,7 @@
       a { color: #e0b63a; }
       .meta { color: #8a94a3; font-size: 14px; margin-bottom: 28px; }
       a.back { display: inline-block; margin-top: 32px; color: #edf0f4; }
+      code { color: #edf0f4; }
     </style>
   </head>
   <body>
@@ -50,11 +51,20 @@
       <h2>perseiagent.ai</h2>
       <ul>
         <li><strong>Downloads:</strong> the name and email you give on the download form, the
-          platform, and whether you asked for updates.</li>
+          platform, and whether you asked for updates. Each registration is deleted 24 months
+          after you make it.</li>
+        <li><strong>The download cookie:</strong> once you register, your browser gets one
+          cookie, <code>persei_dl</code>, so you are not asked again on your next download. It
+          holds the number of your registration and when it was made, signed so it cannot be
+          forged; your name and email are not in it. It lasts 365 days, and nothing else on the
+          site reads it. Clear it whenever you like and the form simply asks again.</li>
         <li><strong>Newsletter:</strong> your name and email, only if you sign up or tick the
-          box. Every issue has an unsubscribe link.</li>
-        <li><strong>Visits:</strong> counted from the web server's own logs (no cookies, no
-          analytics script).</li>
+          box. They are kept while you are subscribed, and every issue has an unsubscribe link.
+          After you unsubscribe, the address is kept for 24 months only so that someone else
+          cannot sign you back up, then deleted.</li>
+        <li><strong>Visits:</strong> counted from the web server's own logs. Reading the site
+          sets no cookies and runs no analytics script; the download cookie above is the only
+          one.</li>
       </ul>
 
       <h2>The self-hosted agent</h2>
