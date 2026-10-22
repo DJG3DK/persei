@@ -746,99 +746,86 @@ async function reviewProject(project, cfg, routerKey, requested = null) {
 // calls it server-side, and the mutating call takes the shared secret.
 const CONTROL_PORT = Number(process.env.REVIEW_CONTROL_PORT) || 4101;
 function startControlServer(routerKey) {
+  // Any throw is a 500, never an exit. 2026-10-22 audit, R17: an
+  // unauthenticated `GET //` made `new URL` throw in here, the process exited
+  // and took the in-flight review and the queue with it -- a crash loop for
+  // anyone who could reach the port.
   const server = http.createServer((req, res) => {
-    // Liveness, unauthenticated on purpose: this port is reachable only from
-    // the host's loopback or the bundle's own containers, and nothing here
-    // is a secret (a configured secret reports `true`, never its value). No
-    // model call, no review started -- safe to poll. 503 when a
-    // dependency is missing, so a status-code-only probe is still correct.
-    if (req.method === 'GET' && req.url === '/health') {
-      const checks = {
-        review_secret: {
-          ok: Boolean(REVIEW_CONTROL_SECRET),
-          detail: REVIEW_CONTROL_SECRET ? null : 'REVIEW_CONTROL_SECRET unset: the control endpoint is disabled',
-        },
-        // Same rule as agent-review, and literally the same function:
-        // healthProjectsCheck in services/shared/projects-config.js.
-        projects: healthProjectsCheck(currentProjects()),
-        state_file: (() => {
-          try {
-            loadState();
-            return { ok: true };
-          } catch (e) {
-            // A fixed sentence: /health is unauthenticated, and the error
-            // text carries the file's path.
-            log(`health: state.json unreadable: ${e.message}`);
-            return { ok: false, detail: 'the review state file is unreadable' };
-          }
-        })(),
-      };
-      const ok = Object.values(checks).every((c) => c.ok);
-      // A COUNT for anyone, the names only for a caller holding the control
-      // secret -- the same rule as agent/health.py's project_count. In the
-      // bundle this port is on the compose network, and "which private repo
-      // is being worked on right now" is not this route's to publish.
-      const presented = Buffer.from(req.headers['x-review-secret'] || '');
-      const expected = Buffer.from(REVIEW_CONTROL_SECRET || '');
-      const trusted = REVIEW_CONTROL_SECRET && presented.length === expected.length
-        && crypto.timingSafeEqual(presented, expected);
-      res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        ok,
-        service: 'commit-reviewer',
-        checks,
-        reviewing_count: inProgressProjects.size,
-        ...(trusted ? { reviewing: [...inProgressProjects] } : {}),
-      }));
-      return;
+    try {
+      handleControl(req, res, routerKey);
+    } catch (err) {
+      log(`control: ${req.method} request failed: ${err.message}`);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'internal error' }));
     }
-    // What each project actually verifies. The agent needs this to refuse
-    // "Auto" on the GitHub inbox for a project with no checks: auto-starting
-    // work whose gate runs nothing mechanical is a review in name only, and
-    // the checks live here (projects.json plus this service's own built-ins),
-    // nowhere the agent can read. Names only -- no commands, no paths, no
-    // secrets -- and the shared secret is still required.
-    if (req.method === 'GET' && req.url === '/projects') {
-      if (!REVIEW_CONTROL_SECRET) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'REVIEW_CONTROL_SECRET not configured' }));
-        return;
-      }
-      const provided = Buffer.from(req.headers['x-review-secret'] || '');
-      const expected = Buffer.from(REVIEW_CONTROL_SECRET);
-      if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'invalid or missing X-Review-Secret' }));
-        return;
-      }
-      const out = {};
-      for (const [name, cfg] of Object.entries(currentProjects())) {
-        const checks = Array.isArray(cfg.checks) ? cfg.checks : [];
-        out[name] = {
-          checks: checks.length,
-          names: checks.map((c) => c.name).filter(Boolean),
-          // Generated code outside git and node_modules (a Prisma client) and
-          // how to regenerate it. The agent keeps its own workspaces' copies
-          // current with the same rule this service applies to its worktrees.
-          generated: (cfg.generated || []).filter((g) => g && g.dir && g.schemaFile && g.regenerate)
-            .map((g) => ({ dir: g.dir, schemaFile: g.schemaFile, regenerate: g.regenerate })),
-        };
-      }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, projects: out }));
-      return;
-    }
-    // Split the query off BEFORE matching: `[^/]+` would otherwise read
-    // "Artistic_Gamut?branch=agent/..." as the project name.
-    const parsed = new URL(req.url, 'http://control.local');
-    const m = parsed.pathname.match(/^\/check\/([^/]+)$/);
-    const requestedBranch = parsed.searchParams.get('branch') || null;
-    if (req.method !== 'POST' || !m) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: 'not found' }));
-      return;
-    }
-    // audit C-4: fail closed on a missing secret; constant-time compare.
+  });
+  // See agent-review/server.js for why this is not simply loopback. The
+  // control port is the one that takes mutating calls, so it stays behind the
+  // shared secret either way.
+  const bind = process.env.REVIEW_BIND_ADDRESS
+      || (process.env.TEKTONIX_BUNDLE === '1' ? '0.0.0.0' : '127.0.0.1');
+  server.listen(CONTROL_PORT, bind, () => log(`control server listening on ${bind}:${CONTROL_PORT}`));
+  return server;
+}
+
+function badRequest(res, error) {
+  res.writeHead(400, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: false, error }));
+}
+
+function handleControl(req, res, routerKey) {
+  // Liveness, unauthenticated on purpose: this port is reachable only from
+  // the host's loopback or the bundle's own containers, and nothing here
+  // is a secret (a configured secret reports `true`, never its value). No
+  // model call, no review started -- safe to poll. 503 when a
+  // dependency is missing, so a status-code-only probe is still correct.
+  if (req.method === 'GET' && req.url === '/health') {
+    const checks = {
+      review_secret: {
+        ok: Boolean(REVIEW_CONTROL_SECRET),
+        detail: REVIEW_CONTROL_SECRET ? null : 'REVIEW_CONTROL_SECRET unset: the control endpoint is disabled',
+      },
+      // Same rule as agent-review, and literally the same function:
+      // healthProjectsCheck in services/shared/projects-config.js.
+      projects: healthProjectsCheck(currentProjects()),
+      state_file: (() => {
+        try {
+          loadState();
+          return { ok: true };
+        } catch (e) {
+          // A fixed sentence: /health is unauthenticated, and the error
+          // text carries the file's path.
+          log(`health: state.json unreadable: ${e.message}`);
+          return { ok: false, detail: 'the review state file is unreadable' };
+        }
+      })(),
+    };
+    const ok = Object.values(checks).every((c) => c.ok);
+    // A COUNT for anyone, the names only for a caller holding the control
+    // secret -- the same rule as agent/health.py's project_count. In the
+    // bundle this port is on the compose network, and "which private repo
+    // is being worked on right now" is not this route's to publish.
+    const presented = Buffer.from(req.headers['x-review-secret'] || '');
+    const expected = Buffer.from(REVIEW_CONTROL_SECRET || '');
+    const trusted = REVIEW_CONTROL_SECRET && presented.length === expected.length
+      && crypto.timingSafeEqual(presented, expected);
+    res.writeHead(ok ? 200 : 503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      ok,
+      service: 'commit-reviewer',
+      checks,
+      reviewing_count: inProgressProjects.size,
+      ...(trusted ? { reviewing: [...inProgressProjects] } : {}),
+    }));
+    return;
+  }
+  // What each project actually verifies. The agent needs this to refuse
+  // "Auto" on the GitHub inbox for a project with no checks: auto-starting
+  // work whose gate runs nothing mechanical is a review in name only, and
+  // the checks live here (projects.json plus this service's own built-ins),
+  // nowhere the agent can read. Names only -- no commands, no paths, no
+  // secrets -- and the shared secret is still required.
+  if (req.method === 'GET' && req.url === '/projects') {
     if (!REVIEW_CONTROL_SECRET) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: 'REVIEW_CONTROL_SECRET not configured' }));
@@ -851,37 +838,82 @@ function startControlServer(routerKey) {
       res.end(JSON.stringify({ ok: false, error: 'invalid or missing X-Review-Secret' }));
       return;
     }
-    const project = decodeURIComponent(m[1]);
-    const cfg = currentProjects()[project];
-    if (!cfg) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: `unknown project "${project}"` }));
-      return;
+    const out = {};
+    for (const [name, cfg] of Object.entries(currentProjects())) {
+      const checks = Array.isArray(cfg.checks) ? cfg.checks : [];
+      out[name] = {
+        checks: checks.length,
+        names: checks.map((c) => c.name).filter(Boolean),
+        // Generated code outside git and node_modules (a Prisma client) and
+        // how to regenerate it. The agent keeps its own workspaces' copies
+        // current with the same rule this service applies to its worktrees.
+        generated: (cfg.generated || []).filter((g) => g && g.dir && g.schemaFile && g.regenerate)
+          .map((g) => ({ dir: g.dir, schemaFile: g.schemaFile, regenerate: g.regenerate })),
+      };
     }
-    if (inProgressProjects.has(project)) {
-      // Queued, not dropped: it runs as soon as the current review ends.
-      const position = requestedBranch && TASK_BRANCH_RE.test(requestedBranch)
-        ? queueReview(project, requestedBranch) : null;
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, started: false, queued: Boolean(requestedBranch), position, reason: 'already reviewing' }));
-      return;
-    }
-    // Fire-and-forget: reviewProject can take minutes (real builds/tests/LLM
-    // call), so the HTTP response doesn't wait for it — the dashboard polls
-    // state.json's `inProgress` field (set synchronously before this returns,
-    // via detectNewCommit + the inProgressProjects guard racing the request
-    // itself) to show progress instead.
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, started: true }));
-    reviewProject(project, cfg, routerKey, requestedBranch)
-      .catch((err) => log(`[${project}] manual check failed: ${err.message}`));
-  });
-  // See agent-review/server.js for why this is not simply loopback. The
-  // control port is the one that takes mutating calls, so it stays behind the
-  // shared secret either way.
-  const bind = process.env.REVIEW_BIND_ADDRESS
-      || (process.env.TEKTONIX_BUNDLE === '1' ? '0.0.0.0' : '127.0.0.1');
-  server.listen(CONTROL_PORT, bind, () => log(`control server listening on ${bind}:${CONTROL_PORT}`));
+    res.end(JSON.stringify({ ok: true, projects: out }));
+    return;
+  }
+  // Split the query off BEFORE matching: `[^/]+` would otherwise read
+  // "storefront?branch=agent/..." as the project name.
+  let parsed;
+  try {
+    parsed = new URL(req.url, 'http://control.local');
+  } catch {
+    badRequest(res, 'malformed request path');
+    return;
+  }
+  const m = parsed.pathname.match(/^\/check\/([^/]+)$/);
+  const requestedBranch = parsed.searchParams.get('branch') || null;
+  if (req.method !== 'POST' || !m) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'not found' }));
+    return;
+  }
+  // audit C-4: fail closed on a missing secret; constant-time compare.
+  if (!REVIEW_CONTROL_SECRET) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'REVIEW_CONTROL_SECRET not configured' }));
+    return;
+  }
+  const provided = Buffer.from(req.headers['x-review-secret'] || '');
+  const expected = Buffer.from(REVIEW_CONTROL_SECRET);
+  if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'invalid or missing X-Review-Secret' }));
+    return;
+  }
+  let project;
+  try {
+    project = decodeURIComponent(m[1]);
+  } catch {
+    badRequest(res, 'malformed project name');
+    return;
+  }
+  const cfg = currentProjects()[project];
+  if (!cfg) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: `unknown project "${project}"` }));
+    return;
+  }
+  if (inProgressProjects.has(project)) {
+    // Queued, not dropped: it runs as soon as the current review ends.
+    const position = requestedBranch && TASK_BRANCH_RE.test(requestedBranch)
+      ? queueReview(project, requestedBranch) : null;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, started: false, queued: Boolean(requestedBranch), position, reason: 'already reviewing' }));
+    return;
+  }
+  // Fire-and-forget: reviewProject can take minutes (real builds/tests/LLM
+  // call), so the HTTP response doesn't wait for it — the dashboard polls
+  // state.json's `inProgress` field (set synchronously before this returns,
+  // via detectNewCommit + the inProgressProjects guard racing the request
+  // itself) to show progress instead.
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, started: true }));
+  reviewProject(project, cfg, routerKey, requestedBranch)
+    .catch((err) => log(`[${project}] manual check failed: ${err.message}`));
 }
 
 // worktree.js does the sweeping; the project map it needs is this file's.
@@ -951,4 +983,5 @@ module.exports = {
   branchRecord, withBranchRecord, harnessFailed, computeFileChurn, queueReview, runNextQueued, pendingReviews, sweepLeftoverWorktrees,
   liveInstallIsStale, readWorktreeFile, gatherReferencedFiles,
   extractAgentResponses, stripLeakedMarkup, REVIEW_RESPONSE_MARKER,
+  startControlServer,
 };

@@ -9,6 +9,7 @@ is loopback, which is only true on a host install; and the commit reviewer's
 on free ports with an empty project list, and asks them from outside the
 proxy.
 """
+import http.client
 import json
 import os
 import socket
@@ -145,3 +146,24 @@ def test_commit_reviewer_health_counts_but_does_not_name(commit_reviewer):
 def test_commit_reviewer_health_names_them_to_the_secret(commit_reviewer):
     _, body = _get(commit_reviewer + "/health", {"X-Review-Secret": SECRET})
     assert body["reviewing"] == []
+
+
+def _raw(base, method, path, headers=None):
+    """A request whose path is sent byte for byte -- urllib would tidy `//`."""
+    host, port = base.removeprefix("http://").split(":")
+    conn = http.client.HTTPConnection(host, int(port), timeout=5)
+    try:
+        conn.request(method, path, headers=headers or {})
+        return conn.getresponse().status
+    finally:
+        conn.close()
+
+
+def test_a_malformed_path_is_a_400_not_a_crash(commit_reviewer):
+    """2026-10-22 audit, R17: `GET //` made `new URL` throw and the process
+    exit, losing the in-flight review and the queue; `POST /check/%` did the
+    same through decodeURIComponent."""
+    assert _raw(commit_reviewer, "GET", "//") == 400
+    assert _raw(commit_reviewer, "POST", "/check/%", {"X-Review-Secret": SECRET}) == 400
+    _, body = _get(commit_reviewer + "/health")
+    assert body["service"] == "commit-reviewer", "the service is still up"
