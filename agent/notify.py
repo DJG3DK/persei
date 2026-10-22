@@ -84,6 +84,18 @@ def planning_url(session_id: str) -> str:
     return f"/planning/{session_id}"
 
 
+def push_tag(repo: str | None, url: str = "/") -> str:
+    """The notification tag: one per task or planning session, read off the
+    link the notification opens, else one per project. A notification
+    replaces the one with its tag, and tagging by project alone made one
+    task's DONE replace another's escalation on the lock screen (audit B39,
+    2026-10-22)."""
+    for prefix in ("/task/", "/planning/"):
+        if url.startswith(prefix) and len(url) > len(prefix):
+            return f"{prefix.strip('/')}:{url[len(prefix):]}"
+    return repo or "persei"
+
+
 async def _push_operators(auth_pool, text: str, repo: str | None, url: str = "/") -> int:
     """The push half of the fan-out. Same recipients, same scoping rule, same
     never-raises contract as the Telegram half.
@@ -109,7 +121,7 @@ async def _push_operators(auth_pool, text: str, repo: str | None, url: str = "/"
         if not _may_hear_about(t["role"], t["allowed_repos"], repo):
             continue
         ok, status = await push.send_one(t, title.strip() or "Persei", body,
-                                         url=url, tag=repo or "tektonix")
+                                         url=url, tag=push_tag(repo, url))
         if ok:
             sent += 1
             await auth.mark_push_ok(auth_pool, t["endpoint"])

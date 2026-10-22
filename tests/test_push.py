@@ -300,3 +300,26 @@ def test_a_name_that_resolves_to_a_private_address_is_not_sent_to(keys_dir, monk
 def test_a_real_push_service_endpoint_is_accepted():
     assert push.endpoint_refusal("https://fcm.googleapis.com/fcm/send/abc:def") is None
     assert push.endpoint_refusal("https://web.push.apple.com/QGx") is None
+
+
+
+@pytest.mark.asyncio
+async def test_two_tasks_on_one_project_do_not_replace_each_other(monkeypatch, fanout):
+    """B39 (2026-10-22): the tag was the project, so one task's DONE replaced
+    another task's escalation on the lock screen."""
+    tags = []
+
+    async def send_one(sub, title, body, url="/", tag=None):
+        tags.append(tag)
+        return True, 200
+
+    monkeypatch.setattr(push, "send_one", send_one)
+    await notify._push_operators(_Pool(), "Task ESCALATED\nwebapp", repo="webapp", url=notify.task_url("t-1"))
+    await notify._push_operators(_Pool(), "Task DONE\nwebapp", repo="webapp", url=notify.task_url("t-2"))
+    assert set(tags) == {"task:t-1", "task:t-2"}
+
+
+def test_the_tag_falls_back_to_the_project_then_the_product():
+    assert notify.push_tag("webapp", notify.planning_url("s-9")) == "planning:s-9"
+    assert notify.push_tag("webapp", "/inbox") == "webapp"
+    assert notify.push_tag(None, "/") == "persei"

@@ -137,7 +137,8 @@ def _payload(title: str, body: str, url: str = "/", tag: str | None = None) -> s
         "url": url,
         # A tag collapses repeats: three escalations of the same task replace
         # one another on the lock screen instead of stacking into a wall.
-        "tag": tag or "tektonix",
+        # notify.push_tag makes it per task, falling back to the project.
+        "tag": tag or "persei",
     })
 
 
