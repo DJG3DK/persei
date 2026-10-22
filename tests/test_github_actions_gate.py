@@ -193,6 +193,46 @@ async def test_ci_that_never_finishes_times_out(monkeypatch):
     assert ci["ok"] is False and ci["reason"] == "timeout"
 
 
+def _stale(id_, name):
+    """A run GitHub still calls in progress, started an hour ago."""
+    return dict(_run(id_, name, status="in_progress", conclusion=None), run_started_at="2026-10-22T17:14:03Z")
+
+
+def _job(conclusion="success", status="completed"):
+    return {"name": "analyze", "status": status, "conclusion": conclusion, "steps": [], "html_url": ""}
+
+
+async def test_a_long_pending_run_whose_jobs_all_passed_counts_as_passed(monkeypatch):
+    """2026-10-22: a CodeQL run's jobs were green at 17:16 and the run said
+    in_progress until 18:34; the gate waited out its hour and escalated."""
+    _wire(monkeypatch, polls=[[_run(1, "CI"), _stale(2, "CodeQL")]], jobs=[_job(), _job("skipped")])
+    ci = await _gate()
+    assert ci["ok"] is True and ci["passed"] == ["CI", "CodeQL"]
+
+
+async def test_a_long_pending_run_with_a_red_job_fails(monkeypatch):
+    _wire(monkeypatch, polls=[[_run(1, "CI"), _stale(2, "CodeQL")]], jobs=[_job(), _job("failure")])
+    ci = await _gate()
+    assert ci["ok"] is False and ci["reason"] == "failed"
+
+
+async def test_a_long_pending_run_with_a_job_still_running_keeps_waiting(monkeypatch):
+    _wire(monkeypatch, polls=[[_stale(2, "CodeQL")]], jobs=[_job(), _job(None, status="in_progress")])
+    ci = await _gate(timeout=0)
+    assert ci["ok"] is False and ci["reason"] == "timeout"
+
+
+async def test_a_fresh_pending_run_is_not_second_guessed():
+    runs = [dict(_run(1, "CI", status="in_progress", conclusion=None), run_started_at="2026-10-22T17:14:03Z")]
+    started = github_ci._epoch("2026-10-22T17:14:03Z")
+
+    class NoJobs:
+        async def get(self, *a, **k):
+            raise AssertionError("a run younger than the threshold is not asked about its jobs")
+    out = await github_ci._settle_from_jobs(NoJobs(), "t", "o/r", runs, now=started + 60)
+    assert out == runs
+
+
 # ── the ship gate acting on it ─────────────────────────────────────────────
 
 def _ship(monkeypatch, ci):

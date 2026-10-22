@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 
 import httpx
 
@@ -113,6 +114,50 @@ async def _failed_jobs(client: httpx.AsyncClient, token: str, slug: str, run: di
         "url": j.get("html_url", ""),
     } for j in jobs if j.get("status") == "completed" and j.get("conclusion") not in _PASSING]
     return out or fallback
+
+
+# A run whose jobs have all finished but which GitHub still calls in progress.
+# 2026-10-22: a CodeQL run's two jobs were green by 17:16 and the run said
+# "in_progress" until 18:34; the gate waited out its hour on it and escalated
+# a change that had passed. Past this age, a pending run's jobs are asked too.
+SETTLE_FROM_JOBS_AFTER_S = 600
+
+
+async def _settle_from_jobs(client: httpx.AsyncClient, token: str, slug: str, runs: list[dict],
+                            now: float | None = None) -> list[dict]:
+    """The runs, with any long-pending one whose jobs have all completed read
+    as completed: success when every job passed, failure otherwise. A run with
+    no jobs yet, an unfinished job, or jobs that cannot be read stays as it is."""
+    now = time.time() if now is None else now
+    out = []
+    for run in runs:
+        started = _epoch(run.get("run_started_at") or run.get("created_at"))
+        if (run.get("status") == "completed" or started is None
+                or now - started < SETTLE_FROM_JOBS_AFTER_S):
+            out.append(run)
+            continue
+        try:
+            r = await client.get(f"{API}/repos/{slug}/actions/runs/{run['id']}/jobs", headers=_headers(token),
+                                 params={"filter": "latest", "per_page": 100})
+            r.raise_for_status()
+            jobs = r.json().get("jobs") or []
+        except (httpx.HTTPError, KeyError, ValueError):
+            out.append(run)
+            continue
+        if jobs and all(j.get("status") == "completed" for j in jobs):
+            passed = all(j.get("conclusion") in _PASSING for j in jobs)
+            logger.info("github actions: %s run %s still says %s, but its %d job(s) finished (%s)",
+                        slug, run.get("id"), run.get("status"), len(jobs), "green" if passed else "red")
+            run = dict(run, status="completed", conclusion="success" if passed else "failure")
+        out.append(run)
+    return out
+
+
+def _epoch(stamp) -> float | None:
+    try:
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 def describe_failures(failed: list[dict]) -> str:
@@ -209,6 +254,7 @@ async def gate_on_actions(project: str, branch: str, sha: str, title: str, *, ti
                 logger.warning("github actions poll for %s@%s failed (will retry): %s", slug, sha[:12], e)
                 runs = None
             if runs is not None:
+                runs = await _settle_from_jobs(client, token, slug, runs)
                 state, failed = verdict(runs)
                 if state == "failed":
                     details = []
