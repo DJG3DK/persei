@@ -415,3 +415,85 @@ test('a dangling symlink is skipped, not thrown', () => {
     assert.ok(mounts.includes(`${wt}:/workspace`), 'the worktree is still mounted');
     assert.ok(!mounts.some(m => m.includes('gone-away')));
 });
+
+// --- a timeout stops the container -----------------------------------------
+//
+// 2026-10-22 audit, R16: execFile's timeout only signalled the docker CLI; a
+// test runner as the container's PID 1 ignored it, ran to the end, and its
+// exit 0 was recorded as a pass while every other review waited behind it.
+
+test('the container is named and has an init, so it can be stopped', () => {
+    const { live, wt } = scratchProject();
+    const { docker } = sandbox.dockerArgs({ live }, wt, '.', 'npm', ['test'], {}, 'none', null, 'rvw-abc123');
+    assert.equal(valueOf(docker, '--name'), 'rvw-abc123');
+    assert.ok(docker.includes('--init'), 'a test runner as PID 1 ignores SIGTERM');
+    assert.ok(docker.indexOf('--init') < docker.indexOf('--entrypoint'), 'a run flag, not an argument to the check');
+});
+
+test('a check that outlives its timeout is killed by name and reported as timed out', () => {
+    // A fake docker: `run` hangs as a check that ignores signals would, and
+    // `kill`/`rm` are recorded. Chained after the other PATH-swapping test so
+    // the two never see each other's docker.
+    const prior = Promise.allSettled(pendingAsync.slice());
+    pendingAsync.push(prior.then(async () => {
+        const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'fakedocker-'));
+        const calls = path.join(bin, 'calls');
+        fs.writeFileSync(path.join(bin, 'docker'),
+            `#!/bin/sh\necho "$@" >> '${calls}'\n[ "$1" = run ] && exec sleep 30\nexit 0\n`, { mode: 0o755 });
+        const savedPath = process.env.PATH;
+        process.env.PATH = `${bin}:${savedPath}`;
+        const { live, wt } = scratchProject();
+        try {
+            const started = Date.now();
+            const r = await sandbox.runSandboxed({ live }, wt, '.', 'npm', ['test'], 500, {}, 'none');
+            assert.ok(Date.now() - started < 10_000, 'returned when the timeout fired, not when the check ended');
+            assert.equal(r.ok, false);
+            assert.equal(r.code, 124);
+            assert.equal(r.infrastructure, true);
+            assert.match(r.output, /timed out after/);
+            const lines = fs.readFileSync(calls, 'utf8').trim().split('\n');
+            const name = valueOf(lines[0].split(' '), '--name');
+            assert.match(name || '', /^rvw-[0-9a-f]+$/);
+            assert.deepEqual(lines.slice(1), [`kill ${name}`, `rm -f ${name}`]);
+        } finally {
+            process.env.PATH = savedPath;
+            fs.rmSync(bin, { recursive: true, force: true });
+        }
+    }));
+});
+
+test('with docker and the image here, a hung check leaves no container behind', () => {
+    // Docker-gated: skipped on a machine with no daemon or no sandbox image.
+    // Asked inside the chain: the tests above put a fake docker on PATH until
+    // their own runs finish.
+    const { execFileSync } = require('child_process');
+    const prior = Promise.allSettled(pendingAsync.slice());
+    pendingAsync.push(prior.then(async () => {
+        try {
+            execFileSync('docker', ['image', 'inspect', sandbox.IMAGE], { stdio: 'ignore' });
+        } catch {
+            console.log('  skip  no docker or no sandbox image');
+            return;
+        }
+        // Compared with what was there before: on a machine running the
+        // bundle, the agent's own review containers are also called rvw-.
+        const rvw = () => execFileSync('docker', ['ps', '-aq', '--filter', 'name=rvw-'], { encoding: 'utf8' })
+            .split('\n').filter(Boolean);
+        const before = new Set(rvw());
+        const { live, wt } = scratchProject();
+        const started = Date.now();
+        const r = await sandbox.runSandboxed({ live }, wt, '.', 'sleep', ['40'], 3_000, {}, 'none');
+        assert.ok(Date.now() - started < 20_000, `took ${Date.now() - started} ms`);
+        assert.equal(r.ok, false);
+        assert.equal(r.code, 124);
+        // `rm -f` racing `--rm` leaves the container "Dead" for a moment
+        // while the daemon finishes removing it; gone within seconds.
+        let left = [];
+        for (let i = 0; i < 20; i++) {
+            left = rvw().filter((id) => !before.has(id));
+            if (!left.length) break;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        assert.deepEqual(left, [], `containers left behind: ${left}`);
+    }));
+});

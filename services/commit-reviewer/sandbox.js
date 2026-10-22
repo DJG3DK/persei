@@ -39,6 +39,7 @@
 'use strict';
 
 const { execFile } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { nodeModulesSource } = require('./node-modules-source');
@@ -434,7 +435,7 @@ function mountSpecs(cfg, worktreePath) {
  * the difference between containment and a container, and a source grep
  * passes for a flag that has been moved into a branch that never runs.
  */
-function dockerArgs(cfg, worktreePath, relDir, cmd, args, extraEnv, network, stack) {
+function dockerArgs(cfg, worktreePath, relDir, cmd, args, extraEnv, network, stack, name) {
     // A check's own stack wins; then the project's own image
     // (projects.json `sandbox_image`), then the project's stack, then the
     // default -- the same order agent/tools/sandbox.py uses, so the agent
@@ -454,6 +455,11 @@ function dockerArgs(cfg, worktreePath, relDir, cmd, args, extraEnv, network, sta
 
     const docker = [
         'run', '--rm',
+        // Named, so a check that outlives its timeout can be killed by name,
+        // and with --init, so the check is not PID 1: a test runner as PID 1
+        // has no default SIGTERM handler and ignores the signal (see runSandboxed).
+        ...(name ? ['--name', name] : []),
+        '--init',
         ...mountArgs(cfg, worktreePath),
         '--network', network === 'bridge' ? 'bridge' : 'none',
         '-w', path.posix.join('/workspace', relDir || '.'),
@@ -481,9 +487,46 @@ function dockerArgs(cfg, worktreePath, relDir, cmd, args, extraEnv, network, sta
 }
 
 
+// The timer is ours, not execFile's. execFile's `timeout` SIGTERMs the docker
+// CLI, which forwards it to the container's PID 1 -- a test runner with no
+// handler ignores it there, so the container ran on, and when it finally
+// exited 0 the check was recorded as PASS. 2026-10-22 audit, R16: a `sleep 40`
+// check with a 3 s timeout was still Up at 12 s and came back
+// {ok: true, code: 0} at 40.5 s, with every other review queued behind it.
+// The bundle's agent/review_sandbox.py run_check already did this right; this
+// is the same shape: kill by name, then remove, then report the timeout.
 async function runSandboxed(cfg, worktreePath, relDir, cmd, args, timeoutMs, extraEnv, network, stack) {
-    const { docker, image } = dockerArgs(cfg, worktreePath, relDir, cmd, args, extraEnv, network, stack);
-    const r = await execp('docker', docker, { timeout: timeoutMs || 300_000 });
+    const name = `rvw-${crypto.randomBytes(6).toString('hex')}`;
+    const { docker, image } = dockerArgs(cfg, worktreePath, relDir, cmd, args, extraEnv, network, stack, name);
+    const timeoutS = Math.round((timeoutMs || 300_000) / 1000);
+    let child;
+    const done = new Promise((resolve) => {
+        child = execFile('docker', docker, { maxBuffer: 20 * 1024 * 1024 }, (err, stdout, stderr) => {
+            resolve({ ok: !err, code: err ? (err.code ?? 1) : 0, out: (stdout || '') + (stderr || ''),
+                      stderr: stderr || '' });
+        });
+    });
+    let timer;
+    const expired = new Promise((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs || 300_000); });
+    const r = await Promise.race([done, expired]);
+    clearTimeout(timer);
+    if (r === null) {
+        await execp('docker', ['kill', name]);
+        await execp('docker', ['rm', '-f', name]);
+        // The CLI exits once its container is gone; a daemon that does not
+        // answer must not hold the review queue either.
+        child.kill('SIGKILL');
+        await done;
+        log(`  ${cmd} timed out after ${timeoutS}s in ${name}; container killed`);
+        // Flagged as the harness's failure, as review_sandbox.py does: a check
+        // that did not finish says nothing about the code.
+        return {
+            ok: false, code: 124, infrastructure: true,
+            output: `SETUP: the check timed out after ${timeoutS}s and was stopped; nothing is known `
+                  + `about the code either way. Raise this check's timeoutMs in the project's review `
+                  + `settings if the suite genuinely needs longer.`,
+        };
+    }
     // Docker's own complaint goes to stderr before the command runs; the
     // check's stdout is never where it is looked for.
     return classify({ ...r, head: r.stderr }, image);
