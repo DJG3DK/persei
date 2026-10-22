@@ -414,16 +414,23 @@ services:
     restart: unless-stopped
 
   checks-redis:
-    image: redis:8-alpine
+    # By digest: the ACL below is checked against what this image loads.
+    image: redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     container_name: tektonix-checks-redis
     # One user, every check: Redis cannot bind a user to a database index,
     # so a run's own index is a convention (agent/review_sandbox.py). The
     # commands that reach past it -- FLUSHALL over every run's index, CONFIG,
     # DEBUG, SHUTDOWN, ACL -- are denied; FLUSHDB stays, the agent uses it
     # to clear one index per run. The health check's PING is unaffected.
+    # Redis 8's image loads four modules (search, JSON, time series, bloom),
+    # and +@all granted their commands too: FT.CONFIG SET is a CONFIG for
+    # every run, and MODULE LOAD runs any library (2026-10-22). Their
+    # categories and MODULE are denied, which leaves what Redis 7 offered.
     command: ["redis-server", "--save", "", "--appendonly", "no",
               "--user", "default", "on", "nopass", "~*", "&*", "+@all",
-              "-flushall", "-config", "-debug", "-shutdown", "-acl"]
+              "-flushall", "-config", "-debug", "-shutdown", "-acl", "-module",
+              "-@search", "-@json", "-@timeseries", "-@bloom", "-@cuckoo",
+              "-@cms", "-@topk", "-@tdigest"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

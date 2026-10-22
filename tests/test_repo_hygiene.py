@@ -559,3 +559,18 @@ def test_every_built_service_builds_rather_than_pulling_its_local_name():
     for name, svc in compose["services"].items():
         if "build" in svc:
             assert svc.get("pull_policy") == "build", f"{name} needs pull_policy: build"
+
+
+def test_the_checks_redis_denies_the_modules_redis_8_loads():
+    """I25, 2026-10-22: redis:8's image loads search, JSON, time series and
+    bloom, and +@all granted their commands; FT.CONFIG SET reaches every
+    run like CONFIG, and MODULE LOAD runs any library. Their categories
+    are denied, and the image is pinned to the one this was checked on."""
+    compose = yaml.safe_load((REPO / "docker-compose.yml").read_text())
+    svc = compose["services"]["checks-redis"]
+    assert re.fullmatch(r"redis:8-alpine@sha256:[0-9a-f]{64}", svc["image"])
+    rule = svc["command"][svc["command"].index("--user") + 1:]
+    for denied in ("-module", "-@search", "-@json", "-@timeseries", "-@bloom",
+                   "-@cuckoo", "-@cms", "-@topk", "-@tdigest"):
+        assert denied in rule, denied
+    assert rule.index("+@all") < min(rule.index(d) for d in ("-module", "-@search")), "a deny after the grant"
