@@ -1069,17 +1069,25 @@ pub struct AppUpdate {
 /// (updater_endpoint), and releases are ordered the way the stack orders
 /// them (version_key). The plugin's default is semver, which reads a
 /// pre-release label as text, so `rc14 < rc9`: an rc9 app saw rc10 to rc22
-/// as older and never moved (2026-09-29).
+/// as older and never moved (2026-09-29). On Windows the plugin exits the
+/// process itself after starting the installer; the log follow is stopped
+/// first, and the plugin's own hook (cleanup_before_exit), which this one
+/// replaces, still runs.
 fn updater(app: &AppHandle, tag: &str) -> Result<tauri_plugin_updater::Updater, String> {
     use tauri_plugin_updater::UpdaterExt;
     let endpoint: tauri::Url = updater_endpoint(tag)
         .parse()
         .map_err(|e: url::ParseError| e.to_string())?;
+    let leaving = app.clone();
     app.updater_builder()
         .endpoints(vec![endpoint])
         .map_err(|e| e.to_string())?
         .version_comparator(|current, release| {
             app_update_wanted(&current.to_string(), &release.version.to_string())
+        })
+        .on_before_exit(move || {
+            crate::stop_follow_on_exit(&leaving);
+            leaving.cleanup_before_exit();
         })
         .build()
         .map_err(|e| e.to_string())

@@ -273,3 +273,17 @@ def test_the_linux_app_is_built_signed_and_joins_the_release_before_it_goes_publ
     # The tray's libayatana-appindicator3-1 is added to the .deb by Tauri
     # itself (tray-icon feature); listing it again doubled it.
     assert "depends" not in conf["bundle"]["linux"]["deb"]
+
+
+def test_a_windows_app_update_stops_the_log_follow_before_the_plugin_exits():
+    """D30, 2026-10-22: on Windows the updater plugin starts the installer
+    and calls process::exit, so RunEvent::Exit never comes and a
+    `docker compose logs -f` child outlived the app. Its on_before_exit
+    hook replaces the plugin's own, so that one (cleanup_before_exit) runs
+    from ours."""
+    src = (REPO / "app/src-tauri/src/stack.rs").read_text()
+    body = src[src.index("fn updater(app: &AppHandle"):]
+    body = body[: body.index("\n}\n")]
+    hook = body[body.index(".on_before_exit("):]
+    assert hook.index("crate::stop_follow_on_exit(") < hook.index(".cleanup_before_exit()")
+    assert body.index(".on_before_exit(") < body.index(".build()")

@@ -371,9 +371,13 @@ async fn logs_follow(
     Ok(())
 }
 
-/// The app is going: the log follow goes with it. Quit from the tray, and
-/// the restart after an update, both come through here.
-fn stop_follow_on_exit(app: &AppHandle) {
+/// The app is going: the log follow goes with it. Quit from the tray and
+/// the restart after a Linux update come through RunEvent::Exit; a Windows
+/// update does not: the plugin starts the installer and calls
+/// process::exit, so no destructor or exit event runs, and the
+/// `docker compose logs -f` child outlived the app (2026-10-22). The
+/// updater's on_before_exit calls this for that one (stack::updater).
+pub(crate) fn stop_follow_on_exit(app: &AppHandle) {
     if let Some(follow) = app.try_state::<Arc<LogFollow>>() {
         if let Ok(mut slot) = follow.0.try_lock() {
             if let Some(child) = slot.take() {
