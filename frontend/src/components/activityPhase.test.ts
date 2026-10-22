@@ -74,10 +74,12 @@ describe("what the banner says", () => {
     expect(idleMessage([slow], 1400)).toContain("longer than usual");
   });
 
-  it("keeps the old warning for ordinary silence", () => {
+  it("keeps the old warning for ordinary silence, after five minutes", () => {
     const work = [entry("calling: bash({command: 'npm test'})")];
     expect(idleMessage(work, 60)).toBeNull();
-    expect(idleMessage(work, 200)).toContain("either on a long model call or stuck");
+    expect(idleMessage(work, 200)).toBeNull();   // a long model call is normal
+    expect(idleMessage(work, 299)).toBeNull();
+    expect(idleMessage(work, 300)).toContain("either on a long model call or stuck");
   });
 
   it("covers a review wait, which is silent for up to fifteen minutes", () => {
@@ -87,7 +89,7 @@ describe("what the banner says", () => {
   });
 
   it("always offers the way out", () => {
-    const cases: [LogEntry[], number][] = [[[CHECKS], 900], [[entry("x")], 300]];
+    const cases: [LogEntry[], number][] = [[[CHECKS], 900], [[entry("x")], 360]];
     for (const [log, secs] of cases) {
       expect(idleMessage(log, secs)).toContain("Stop button");
     }

@@ -81,6 +81,9 @@ function humanDuration(seconds: number): string {
   return `${(seconds / 3600).toFixed(1)} h`;
 }
 
+/** Silence outside a known phase that is still normal. */
+export const ORDINARY_QUIET_SECONDS = 300;
+
 /** What the banner should say, or null when there is nothing worth saying. */
 export function idleMessage(log: LogEntry[], idleSeconds: number): string | null {
   const phase = currentPhase(log);
@@ -95,7 +98,10 @@ export function idleMessage(log: LogEntry[], idleSeconds: number): string | null
       + " The Stop button ends it, and a resume keeps the work so far.";
   }
 
-  if (idleSeconds < 120) return null;
+  // Five minutes, not two (2026-10-22): a model call on a big context
+  // routinely runs two or three minutes, and a warning that fires on ordinary
+  // work teaches people to ignore it.
+  if (idleSeconds < ORDINARY_QUIET_SECONDS) return null;
   return `No activity for ${elapsed}. The connection is live, so the agent is either on a long model`
     + " call or stuck — the Stop button ends it, and a resume keeps the work so far.";
 }
