@@ -40,7 +40,7 @@ def _release(tmp: Path, *, name="Persei_0.9.2_amd64.AppImage", body=STUB, digest
 def _run(tmp: Path, api: Path, *args):
     home = tmp / "home"
     home.mkdir(exist_ok=True)
-    env = {"PATH": os.environ["PATH"], "HOME": str(home), "TEKTONIX_API": f"file://{api}"}
+    env = {"PATH": os.environ["PATH"], "HOME": str(home), "PERSEI_API": f"file://{api}"}
     r = subprocess.run(["sh", str(SCRIPT), *args], env=env, capture_output=True, text=True, timeout=60)
     return r, home
 
@@ -96,3 +96,32 @@ def test_release_notes_cannot_pose_as_an_asset(tmp_path):
     r, home = _run(tmp_path, _release(tmp_path, compact=True, notes=notes))
     assert r.returncode == 0, r.stderr
     assert (home / ".local/share/io.tektonix.desktop/Tektonix.AppImage").read_text() == STUB
+
+
+def test_help_works_under_a_pipe():
+    """`curl ... | sh -s -- --help`: $0 is `sh` there, and the help used to
+    be read from it."""
+    r = subprocess.run(["sh", "-s", "--", "--help"], input=SCRIPT.read_text(), capture_output=True, text=True)
+    assert r.returncode == 0 and "Install the Persei desktop app on Linux." in r.stdout
+
+
+def test_a_truncated_download_runs_nothing(tmp_path):
+    """I27, 2026-10-22: everything is in main, called on the last line, so a
+    script cut short anywhere before it only defines functions."""
+    text = SCRIPT.read_text()
+    assert text.rstrip().splitlines()[-1] == 'main "$@"'
+    home = tmp_path / "home"
+    home.mkdir()
+    cut = text[: text.rindex('main "$@"')]
+    env = {"PATH": os.environ["PATH"], "HOME": str(home)}
+    for n in range(len(cut) // 4, len(cut), max(1, len(cut) // 9)):
+        r = subprocess.run(["sh", "-s"], input=cut[:n], env=env, capture_output=True, text=True, timeout=30)
+        assert "Looking up the release" not in r.stdout, n
+    assert not (home / ".local").exists()
+
+
+def test_every_fetch_is_https_only():
+    text = SCRIPT.read_text()
+    assert 'PROTO="--proto =https,file --proto-redir =https"' in text
+    fetches = [line for line in text.splitlines() if "curl -f" in line and "perseiagent.ai/install" not in line]
+    assert len(fetches) == 2 and all("$PROTO" in line for line in fetches)
