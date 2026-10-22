@@ -140,7 +140,13 @@ def _read_outcome(state: dict) -> tuple[str, str | None]:
         if requests[0].get("name") == "ask_user":
             question = str((requests[0].get("args") or {}).get("question") or "").strip()
             return "escalated", f"asked the operator: {question[:600] or '(no question text)'}"
-        return "blocked", f"parked awaiting approval for: {requests[0].get('name', 'a tool call')}"
+        # The call itself, not just its name: "awaiting approval for: bash"
+        # left a blocked task unexplainable once the run's store was gone
+        # (2026-10-22, py-money-rounding).
+        args = requests[0].get("args") or {}
+        what = str(args.get("command") or args.get("file_path") or "").strip()
+        detail = f": {what[:600]}" if what else ""
+        return "blocked", f"parked awaiting approval for: {requests[0].get('name', 'a tool call')}{detail}"
     if state.get("pending_merge_approval"):
         # The resting state this harness AIMS for: a READY verdict, parked on
         # the operator's final look, nothing merged. review_gate_result is set,

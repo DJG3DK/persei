@@ -436,6 +436,17 @@ async def test_commands_are_auto_approved_so_a_task_measures_coding(run_kwargs):
     assert graph.invocations[0][0]["auto_approve_commands"] is True
 
 
+@pytest.mark.asyncio
+async def test_a_blocked_task_says_which_command_it_stopped_on(run_kwargs):
+    """2026-10-22: "awaiting approval for: bash" could not be explained once
+    the run's store was cleaned up. The report carries the command itself."""
+    state = dict(BLOCKED, pending_approval={"action_requests": [
+        {"name": "bash", "args": {"command": 'rm -rf "$d"'}}]})
+    run = await runner.run_task(task(), graph=FakeGraph(state), **run_kwargs)
+    assert run.outcome == "blocked"
+    assert run.escalation_reason == 'parked awaiting approval for: bash: rm -rf "$d"'
+
+
 def test_a_blocked_task_is_kept_out_of_the_aggregate():
     """It says nothing about the agent, and counting it as an escalation would
     blame the agent for an operator gate that never opened."""

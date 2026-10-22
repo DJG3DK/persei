@@ -369,7 +369,9 @@ test body to code you did not change. The verifier's verdict line is "VERDICT: F
 "VERDICT: FIX INCOMPLETE"; a FIX INCOMPLETE is not overridden by "upstream does it this way".
 
 SCRATCH: throwaway probe scripts and their output go in /workspace/.scratch/ -- git ignores it, so \
-nothing there is ever committed. Never leave them elsewhere in the repository. The sandbox's .git is \
+nothing there is ever committed. Never leave them elsewhere in the repository. Clean it up by naming \
+the path (`rm -rf /workspace/.scratch/mutants`), never through a shell variable (`rm -rf "$d"`): a \
+delete whose target the harness cannot read stops the task for the operator's approval. The sandbox's .git is \
 read-only: git stash/checkout/restore/commit fail. To run the code as it was BEFORE your change, \
 use /baseline when it exists (the untouched tree, read-only) or `git show HEAD:<path>`. For an \
 editable install (`pip install -e`, Django's runtests.py, most of these repos) a test runner \
