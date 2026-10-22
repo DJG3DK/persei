@@ -50,6 +50,7 @@ import httpx
 
 from agent import github_settings
 from agent import audit
+from agent import store_paging
 from agent.config import Config
 from agent.tools.github_tools import fetch_pull_request, format_pull_request, resolve_slug
 
@@ -145,7 +146,7 @@ class GitHubClient:
 
 @dataclass
 class Item:
-    key: str                 # "pr:12" / "alert:7" / "review:12" / "ci:<sha>:<name>" / "code:<rule>"
+    key: str                 # "pr:12" / "alerts:<pkg@manifest>" / "review:12" / "ci:<sha>:<name>" / "code:<rule>"
     kind: str                # a SOURCES name
     repo: str
     title: str
@@ -299,11 +300,17 @@ def security_alert_items(alerts: list[dict], repo: str, slug: str) -> list[Item]
     version among them), and on 2026-09-29 they became eleven tasks: one
     merge closed all eleven and the other ten rebased, re-reviewed and
     merged a lockfile change that fixed nothing. A package with a single
-    alert keeps the item it always had (`alert:<n>`, the alert's own number
-    and page). A group is keyed by package and manifest, carries every
-    alert number in its summary, and its fingerprint covers each alert's
-    number and state, so a partial fix re-decides it and a full fix
-    resolves it."""
+    alert keeps the title, number and page it always had. A group carries
+    every alert number in its summary, and its fingerprint covers each
+    alert's number and state, so a partial fix re-decides it and a full fix
+    resolves it.
+
+    Either way the key is `alerts:<pkg@manifest>`. A single alert used to be
+    `alert:<n>`, so a second advisory on the same package changed the key:
+    the new group started a second task while the first was still on
+    `alert:5`, and a group shrinking to one alert started `alert:9` at once,
+    with no settle wait and no record of the attempt (audit B36,
+    2026-10-22). poll_project moves an old `alert:<n>` row to its new key."""
     groups: dict[tuple[str, str], list[dict]] = {}
     for a in alerts:
         if a.get("state") not in (None, "open"):
@@ -314,13 +321,14 @@ def security_alert_items(alerts: list[dict], repo: str, slug: str) -> list[Item]
     items: list[Item] = []
     for (pkg, manifest), group in groups.items():
         group.sort(key=lambda a: int(a.get("number") or 0))
+        key = "alerts:" + re.sub(r"[^A-Za-z0-9._@-]", "-", f"{pkg}@{manifest}".replace("/", "."))
         if len(group) == 1:
             a = group[0]
             adv = a.get("security_advisory") or {}
             vuln = a.get("security_vulnerability") or {}
             sev = (adv.get("severity") or "?").upper()
             items.append(Item(
-                key=f"alert:{a['number']}", kind="security_alerts", repo=repo, number=a["number"],
+                key=key, kind="security_alerts", repo=repo, number=a["number"],
                 title=f"[{sev}] {pkg}: {adv.get('summary') or 'security alert'}",
                 url=a.get("html_url") or "", fingerprint=f"{a.get('state')}:{adv.get('ghsa_id')}",
                 summary=f"{pkg} {vuln.get('vulnerable_version_range') or ''} -> patched in "
@@ -344,9 +352,8 @@ def security_alert_items(alerts: list[dict], repo: str, slug: str) -> list[Item]
         fp = hashlib.sha1("|".join(f"{a.get('number')}:{a.get('state')}:"
                                    f"{(a.get('security_advisory') or {}).get('ghsa_id')}" for a in group).encode()
                           ).hexdigest()[:12]
-        safe = re.sub(r"[^A-Za-z0-9._@-]", "-", f"{pkg}@{manifest}".replace("/", "."))
         items.append(Item(
-            key=f"alerts:{safe}", kind="security_alerts", repo=repo, number=None,
+            key=key, kind="security_alerts", repo=repo, number=None,
             title=f"[{sev.upper()}] {pkg}: {len(group)} open alerts in {manifest}, patched in {target}",
             url=f"https://github.com/{slug}/security/dependabot?q=is%3Aopen+package%3A{pkg}",
             fingerprint=fp, summary="\n".join(lines),
@@ -468,8 +475,9 @@ class Decision:
 
 # How long a finished task's item waits for GitHub to catch up, for the
 # kinds that have no scan to wait for (Dependabot re-evaluates on push, a
-# check reruns, a pull request closes). Code scanning waits for an actual
-# analysis of the default branch newer than the task instead.
+# check reruns). Code scanning waits for an actual analysis of the default
+# branch newer than the task instead. A pull request item never settles on
+# a clock: see _after_finished_task.
 SETTLE_S = 45 * 60
 # An analysis must start at least this long after the task finished to count:
 # one already running for the commit before the fix can finish just after.
@@ -484,10 +492,19 @@ def settled(kind: str, finished_at: float, now: float, scanned_at: float | None)
 
 
 def still_open_text(item: Item | dict) -> str:
-    """'1 of 1 alerts', '4 of 4 alerts', or 'it' for an item with no numbers."""
+    """What GitHub still reports, in the item's own terms: '1 alert',
+    '4 alerts', 'the check failing', or 'it'."""
     d = item.to_dict() if isinstance(item, Item) else item
-    n = len(alert_numbers(d))
+    if d.get("kind") == "ci_failures":
+        return "the check failing"
+    n = len(alert_numbers(d)) if d.get("kind") in ("security_alerts", "code_scanning") else 0
     return f"{n} alert{'s' if n != 1 else ''}" if n else "it"
+
+
+def _review_id(fingerprint: str | None) -> str:
+    """The newest changes-requested review in a review item's fingerprint
+    (`<head>:<review id>`)."""
+    return str(fingerprint or "").rsplit(":", 1)[-1]
 
 
 def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: int,
@@ -528,6 +545,27 @@ def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: 
             return None
         item.created_at = prev.get("created_at", now)
         item.task_id = tid
+        # A pull request's own state is the signal, not a clock (audit B37,
+        # 2026-10-22). A merged fix never clears a CHANGES_REQUESTED review,
+        # and Dependabot often takes longer than SETTLE_S to close a PR the
+        # fix superseded -- or rebases it onto the fix first -- so both came
+        # back 45 minutes after their task, as "GitHub still reports 1 alert
+        # after re-scanning". A Dependabot PR item stays with its task until
+        # the PR closes (it is then gone, and resolved); a review item comes
+        # back only for a new review that asks for changes again.
+        if item.kind == "dependabot_prs" or (
+                item.kind == "review_requests" and _review_id(item.fingerprint) == _review_id(prev.get("fingerprint"))):
+            item.state = "awaiting_rescan"
+            if prev.get("state") == "awaiting_rescan" and prev.get("fingerprint") == item.fingerprint:
+                return Decision(item, "skip", "")
+            return Decision(item, "none", "task finished; waiting for the pull request to close"
+                            if item.kind == "dependabot_prs" else
+                            "task finished; a new review asking for changes brings it back")
+        if item.kind == "review_requests":
+            item.attempts.append({"task_id": tid, "finished_at": finished[tid], "still_open": []})
+            item.task_id = None
+            item.state = "proposed"
+            return Decision(item, "propose", f"a new review asks for changes after task {tid[:8]} finished")
         if not settled(item.kind, finished[tid], now, scanned_at):
             item.state = "awaiting_rescan"
             if prev.get("state") == "awaiting_rescan" and prev.get("fingerprint") == item.fingerprint:
@@ -538,8 +576,8 @@ def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: 
         item.task_id = None
         item.state = "proposed"
         return Decision(item, "propose",
-                        f"task {tid[:8]} merged its fix, but GitHub still reports {still_open_text(item)} "
-                        "after re-scanning")
+                        f"task {tid[:8]} merged its fix, but GitHub still reports {still_open_text(item)}"
+                        + (" after re-scanning" if item.kind == "code_scanning" else ""))
     # None means "we could not ask", which must behave exactly as before:
     # never re-propose on a guess. An empty SET, by contrast, is a real
     # answer -- nothing is in flight.
@@ -834,20 +872,46 @@ def alert_reference(item: dict) -> str:
     return "alerts " + ", ".join(f"#{n}" for n in nums[:-1]) + f" and #{nums[-1]}"
 
 
-def attempts_text(d: dict) -> str:
-    """What earlier tasks did and what GitHub still says, for the next task."""
-    lines = ["--- earlier attempts that GitHub did not accept ---"]
-    for a in d.get("attempts") or []:
-        when = datetime.fromtimestamp(a.get("finished_at") or 0).strftime("%Y-%m-%d %H:%M")
-        still = ", ".join(f"#{n}" for n in a.get("still_open") or []) or "the item"
-        lines.append(f"- Task {str(a.get('task_id', ''))[:8]} finished and merged its fix on {when}, "
-                     f"but after re-scanning GitHub still reports {still}.")
-    lines.append(
+# What the next task is told to look at, per kind. The scanner advice is for
+# code scanning only: a Dependabot alert or a failing check that came back
+# was given it too, and it sent the task looking for a type check (audit
+# B37, 2026-10-22).
+_ATTEMPT_ADVICE = {
+    "code_scanning": (
         "Before changing anything, read what those commits changed (git log -p on the files above) and "
         "work out why GitHub still flags the code: a scanner usually wants the input checked in a form it "
         "recognises (a type check, an allow-list, a bounds check right where the value is used), not a "
         "wrapper it cannot see through. Fix the lines listed above as GitHub reports them now, and make "
-        "sure the change does not introduce a new finding in the code it touches.")
+        "sure the change does not introduce a new finding in the code it touches."),
+    "security_alerts": (
+        "Before changing anything, read what those commits changed (git log -p) and work out why Dependabot "
+        "still reports the alerts: the vulnerable version is usually still resolved somewhere -- a second "
+        "lockfile or manifest, a transitive dependency that pins it (an override or resolution may be "
+        "needed), or a lockfile that was not regenerated. Check the resolved version in every lockfile."),
+    "ci_failures": (
+        "Before changing anything, read what those commits changed (git log -p) and the failing run's "
+        "log as it is now: the check may fail for a different reason than the one the earlier task fixed."),
+    "review_requests": (
+        "Read the newest review comments first (github_pull_request, part=\"comments\"): they are what "
+        "is left after the earlier task's changes."),
+}
+
+
+def attempts_text(d: dict) -> str:
+    """What earlier tasks did and what GitHub still says, for the next task."""
+    kind = d.get("kind")
+    lines = ["--- earlier attempts that GitHub did not accept ---"]
+    for a in d.get("attempts") or []:
+        when = datetime.fromtimestamp(a.get("finished_at") or 0).strftime("%Y-%m-%d %H:%M")
+        still = ", ".join(f"#{n}" for n in a.get("still_open") or []) or still_open_text({"kind": kind})
+        task = str(a.get("task_id", ""))[:8]
+        if kind == "review_requests":
+            lines.append(f"- Task {task} finished on {when}, and a reviewer has since asked for changes again.")
+        else:
+            lines.append(f"- Task {task} finished and merged its fix on {when}, but GitHub still reports "
+                         f"{still}{' after re-scanning' if kind == 'code_scanning' else ''}.")
+    lines.append(_ATTEMPT_ADVICE.get(kind, "Before changing anything, read what those commits changed "
+                                           "(git log -p) and work out why GitHub still reports the item."))
     return "\n".join(lines)
 
 
@@ -955,10 +1019,71 @@ async def _unchanged_since(store, repo: str, key: str, snapshot: dict | None) ->
 
 
 async def list_items(store, repo: str) -> dict[str, dict]:
+    """Every item of the project. It read `asearch(limit=200)`, the 200 most
+    recently updated: nothing prunes the namespace and CI keys are per
+    commit, so a long-lived project passed 200 and its older items vanished
+    from the list, answered 404 to approve, dismiss and snooze, and were
+    never resolved or re-proposed by the poll (audit B35, 2026-10-22)."""
     out: dict[str, dict] = {}
-    for it in await store.asearch((NAMESPACE, repo), limit=200):
+    for it in await store_paging.all_items(store, (NAMESPACE, repo)):
         out[it.key] = it.value
     return out
+
+
+async def get_item(store, repo: str, key: str) -> dict | None:
+    """One item, read by its key. An approve link minted before the
+    Dependabot key change names `alert:<n>`; it finds the item now holding
+    that alert."""
+    got = await store.aget((NAMESPACE, repo), key)
+    if got is not None and got.value is not None:
+        return dict(got.value)
+    m = re.fullmatch(r"alert:(\d+)", key)
+    if m:
+        for v in (await list_items(store, repo)).values():
+            if v.get("kind") == "security_alerts" and int(m.group(1)) in alert_numbers(v):
+                return dict(v)
+    return None
+
+
+# A resolved item is kept this long, then deleted: long enough to see what
+# the inbox did last month, and the namespace no longer grows forever. Only
+# resolved ones -- a dismissed item still open on GitHub must stay, or it
+# would come back as new; one that closes is resolved, and goes in turn.
+PRUNE_RESOLVED_AFTER_S = 30 * 86400
+
+
+async def _migrate_alert_keys(store, repo: str, existing: dict[str, dict], found: list[Item]) -> dict[str, dict]:
+    """Move each `alert:<n>` row to the `alerts:<pkg@manifest>` key its
+    alert is found under now, keeping its state, task and attempts (B36).
+    The row keeps its updated_at, so the poll's own unchanged-since check
+    still matches it."""
+    for item in found:
+        if item.kind != "security_alerts" or item.key in existing:
+            continue
+        nums = set(alert_numbers(item.to_dict()))
+        olds = [k for k, v in existing.items()
+                if k.startswith("alert:") and v.get("state") != "resolved" and nums & set(alert_numbers(v))]
+        if not olds:
+            continue
+        # The row a task is on wins; then the newest.
+        olds.sort(key=lambda k: (not existing[k].get("task_id"), -(existing[k].get("updated_at") or 0)))
+        moved = {**existing[olds[0]], "key": item.key}
+        async with item_lock(repo, item.key):
+            await store.aput((NAMESPACE, repo), item.key, moved)
+        for k in olds:
+            async with item_lock(repo, k):
+                await _forget(store, repo, k, existing[k])
+            existing.pop(k)
+        existing[item.key] = moved
+    return existing
+
+
+async def _forget(store, repo: str, key: str, value: dict) -> None:
+    delete = getattr(store, "adelete", None)
+    if delete is not None:
+        await delete((NAMESPACE, repo), key)
+    else:   # a store that cannot delete: out of every list but this one
+        await store.aput((NAMESPACE, repo), key, {**value, "state": "resolved", "reason": "moved"})
 
 
 async def put_item(store, item: Item | dict) -> None:
@@ -998,7 +1123,7 @@ async def poll_project(
         return {"repo": repo, "skipped": "no token" if not token else "no GitHub origin"}
     client = client or GitHubClient(token)
     found = await discover(client, repo, slug, proj)
-    existing = await list_items(store, repo)
+    existing = await _migrate_alert_keys(store, repo, await list_items(store, repo), found)
     open_auto = await open_auto_count(repo)
     # Asked at poll time, not at save time only: a project's checks can be
     # emptied long after its policy was set, and the poll is what actually
@@ -1040,6 +1165,14 @@ async def poll_project(
             prev["reason"] = "no longer open on GitHub"
             await put_item(store, prev)
             summary["resolved"] += 1
+    cutoff = time.time() - PRUNE_RESOLVED_AFTER_S
+    found_keys = {i.key for i in found}
+    for key, prev in existing.items():
+        if key in found_keys or key in gone or prev.get("state") != "resolved" or (prev.get("updated_at") or 0) > cutoff:
+            continue
+        async with item_lock(repo, key):
+            if await _unchanged_since(store, repo, key, prev):
+                await _forget(store, repo, key, prev)
     return summary
 
 

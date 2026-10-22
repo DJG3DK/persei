@@ -90,3 +90,49 @@ def test_an_empty_goal_is_refused_before_anything_starts():
         asyncio.run(tasks.start_task(app, "   ", "proj", None, "auto",
                                      auto_approve_commands=False, require_merge_review=True))
     assert e.value.status_code == 422
+
+
+
+class _MetaStore:
+    def __init__(self):
+        self.rows = {}
+
+    async def aget(self, ns, key):
+        v = self.rows.get((ns, key))
+        return SimpleNamespace(key=key, value=v, updated_at=None) if v is not None else None
+
+    async def aput(self, ns, key, value):
+        self.rows[(ns, key)] = dict(value)
+
+
+def test_finished_at_is_stamped_once_as_a_task_becomes_done(monkeypatch):
+    """B40 (2026-10-22): the inbox timed its settle wait from the record's
+    updated_at, which any later write moves."""
+    store, t = _MetaStore(), [1000.0]
+    monkeypatch.setattr(tasks.time, "time", lambda: t[0])
+
+    async def go():
+        await tasks.write_task_meta(store, "proj", "t1", status="running")
+        assert "finished_at" not in store.rows[(("tasks", "proj"), "t1")]
+        t[0] = 2000.0
+        await tasks.write_task_meta(store, "proj", "t1", status="done")
+        t[0] = 3000.0
+        await tasks.write_task_meta(store, "proj", "t1", status="done", cost_so_far=1.0)
+        await tasks.write_task_meta(store, "proj", "t1", cost_so_far=2.0)
+        assert store.rows[(("tasks", "proj"), "t1")]["finished_at"] == 2000.0
+        await tasks.write_task_meta(store, "proj", "t1", status="running")
+        assert "finished_at" not in store.rows[(("tasks", "proj"), "t1")], "a resume is not finished"
+    asyncio.run(go())
+
+
+def test_the_inbox_reads_when_a_task_finished_not_when_it_was_last_written(monkeypatch):
+    from datetime import UTC, datetime
+
+    late = datetime.fromtimestamp(9000.0, tz=UTC)
+
+    async def tasks_in(repo, statuses):
+        return [SimpleNamespace(key="t1", value={"task_id": "t1", "finished_at": 2000.0}, updated_at=late),
+                SimpleNamespace(key="t0", value={"task_id": "t0"}, updated_at=late)]
+
+    monkeypatch.setattr(srv, "_tasks_in", tasks_in)
+    assert asyncio.run(srv._github_finished_tasks("proj")) == {"t1": 2000.0, "t0": 9000.0}

@@ -40,9 +40,11 @@ class _Client:
 async def test_all_closed_asks_github_about_each_alert(monkeypatch):
     from agent import github_inbox
     monkeypatch.setattr(github_inbox, "GitHubClient", _Client)
-    _Client.states, _Client.fail = {6: "fixed", 8: "dismissed"}, False
-    assert await inbox_alerts.all_closed("tok", "o/proj", [6, 8]) is True
+    _Client.states, _Client.fail = {6: "fixed", 7: "auto_dismissed", 8: "dismissed"}, False
+    assert await inbox_alerts.all_closed("tok", "o/proj", [6, 7]) is True
     assert await inbox_alerts.all_closed("tok", "o/proj", [6, 9]) is False, "#9 is still open"
+    assert await inbox_alerts.all_closed("tok", "o/proj", [6, 8]) is False, \
+        "B40: dismissed is a person choosing not to fix it, not a fix"
     assert await inbox_alerts.all_closed("tok", "o/proj", []) is False
     _Client.fail = True
     assert await inbox_alerts.all_closed("tok", "o/proj", [6]) is None, "unknown, not closed"

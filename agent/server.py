@@ -689,12 +689,15 @@ async def _github_live_tasks(repo: str) -> set[str]:
 
 
 async def _github_finished_tasks(repo: str) -> dict[str, float]:
-    """This project's finished tasks and when they finished: the store's own
-    last write, which is the one that set the task done."""
+    """This project's finished tasks and when they finished: the record's
+    finished_at (agent/tasks.py stamps it), or for a task that finished
+    before that existed, the store's own last write."""
     out = {}
     for it in await _tasks_in(repo, ("done",)):
-        stamp = it.updated_at.timestamp() if hasattr(it.updated_at, "timestamp") else float(it.updated_at or 0)
-        out[it.value.get("task_id") or it.key] = stamp
+        stamp = it.value.get("finished_at")
+        if not isinstance(stamp, (int, float)):
+            stamp = it.updated_at.timestamp() if hasattr(it.updated_at, "timestamp") else float(it.updated_at or 0)
+        out[it.value.get("task_id") or it.key] = float(stamp)
     return out
 
 

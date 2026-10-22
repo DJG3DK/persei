@@ -33,14 +33,14 @@ def client(monkeypatch):
         acted.append((repo, key, action, nonce))
         return {"task_id": "t" * 8, "item": {"title": "Fix it"}}
 
-    async def items(store, repo):
-        return {"k1": {"title": "Fix it", "summary": "s", "kind": "code_scanning",
-                       "approval_nonce": "n1", "state": "proposed"}}
+    async def item(store, repo, key):
+        return {"title": "Fix it", "summary": "s", "kind": "code_scanning",
+                "approval_nonce": "n1", "state": "proposed"} if key == "k1" else None
 
     from agent.routers import github as github_routes
     monkeypatch.setattr(github_routes, "_github_act", act)
     monkeypatch.setattr(srv.app.state, "store", object(), raising=False)
-    monkeypatch.setattr(gi, "list_items", items)
+    monkeypatch.setattr(gi, "get_item", item)
     monkeypatch.setattr(srv.github_settings, "project_settings", lambda *a, **k: {"budget_usd": 2.0})
     c = TestClient(srv.app)
     c.acted = acted

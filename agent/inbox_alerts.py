@@ -31,8 +31,15 @@ def alerts_referenced(goal: str) -> tuple[str | None, list[int]]:
     return (slug.group(1) if slug else None), numbers
 
 
+# The states that mean the vulnerability is gone. `dismissed` is a person
+# deciding not to fix it -- the code is unchanged, so the task's work is not
+# already done (audit B40, 2026-10-22). `auto_dismissed` is Dependabot's own
+# finding that the alert no longer applies.
+_FIXED_STATES = ("fixed", "auto_dismissed")
+
+
 async def all_closed(token: str, slug: str, numbers: list[int]) -> bool | None:
-    """True when GitHub says none of the alerts is open, False when one is,
+    """True when GitHub says every alert is fixed, False when one is not,
     None when it cannot say."""
     from agent.github_inbox import GitHubClient  # noqa: PLC0415 -- the inbox imports this module's caller
 
@@ -40,7 +47,7 @@ async def all_closed(token: str, slug: str, numbers: list[int]) -> bool | None:
     try:
         for n in numbers:
             alert = await client.get(f"/repos/{slug}/dependabot/alerts/{n}")
-            if (alert or {}).get("state", "open") == "open":
+            if (alert or {}).get("state", "open") not in _FIXED_STATES:
                 return False
     except Exception as e:  # noqa: BLE001 -- unknown, not closed
         logger.info("inbox alerts: could not read %s alerts %s: %s", slug, numbers, e)

@@ -54,6 +54,15 @@ async def write_task_meta(store, repo: str, task_id: str, **updates) -> dict:
     """
     existing = await store.aget(("tasks", repo), task_id)
     record = dict(existing.value) if existing else {}
+    # When the task finished, stamped once as it becomes done and cleared
+    # when a resume takes it out of done. The GitHub inbox times its settle
+    # wait from it; it used the record's updated_at, which any later write
+    # (a cost mirror, a rename) moves (audit B40, 2026-10-22).
+    if "status" in updates:
+        if updates["status"] == "done" and record.get("status") != "done":
+            record["finished_at"] = time.time()
+        elif updates["status"] != "done":
+            record.pop("finished_at", None)
     record.update(updates)
     record["task_id"] = task_id
     record["repo"] = repo

@@ -85,9 +85,9 @@ async def test_discover_reads_every_switched_on_source_and_one_failure_hides_not
     proj = _proj(dependabot_prs="propose", review_requests="propose", security_alerts="auto", ci_failures="propose")
     items = await gi.discover(gh, "proj", "o/proj", proj)
     keys = sorted(i.key for i in items)
-    assert keys == ["alert:9", "ci:feedfacefeed:ci", "pr:1", "review:3"]
+    assert keys == ["alerts:multer@apps.api.package.json", "ci:feedfacefeed:ci", "pr:1", "review:3"]
     by = {i.key: i for i in items}
-    assert by["alert:9"].title.startswith("[HIGH] multer")
+    assert by["alerts:multer@apps.api.package.json"].title.startswith("[HIGH] multer") and by["alerts:multer@apps.api.package.json"].number == 9
     assert "reviewer" in by["review:3"].summary
     assert by["ci:feedfacefeed:ci"].summary == "3 tests failed"
 
@@ -99,7 +99,7 @@ async def test_discover_reads_every_switched_on_source_and_one_failure_hides_not
     # the alerts endpoint refusing (missing permission) does not hide the PRs
     gh.fail.add("alerts")
     items = await gi.discover(gh, "proj", "o/proj", proj)
-    assert "pr:1" in {i.key for i in items} and "alert:9" not in {i.key for i in items}
+    assert "pr:1" in {i.key for i in items} and "alerts:multer@apps.api.package.json" not in {i.key for i in items}
 
 
 def _item(key, kind="dependabot_prs", fp="a"):
@@ -229,7 +229,7 @@ async def test_poll_project_creates_proposes_notifies_and_resolves(monkeypatch):
     items = await gi.list_items(store, "proj")
     assert items["pr:1"]["state"] == "task_created" and items["pr:1"]["task_id"] == "task-1"
     assert items["pr:2"]["state"] == "proposed" and "cap" in items["pr:2"]["reason"]
-    assert items["alert:9"]["state"] == "proposed" and items["alert:9"]["approval_nonce"]
+    assert items["alerts:p@-"]["state"] == "proposed" and items["alerts:p@-"]["approval_nonce"]
     approve_notes = [n for n in notes if "Approve →" in n]
     assert len(approve_notes) == 2 and "/api/github/approve?t=" in approve_notes[0]
     assert any("started automatically" in n for n in notes)
@@ -758,7 +758,7 @@ async def test_security_alerts_group_by_package_and_manifest():
     ])
     items = await gi.discover(gh, "proj", "o/proj", _proj(security_alerts="propose"))
     by = {i.key: i for i in items}
-    assert sorted(by) == ["alert:7", "alert:8", "alerts:undici@frontend.package-lock.json"]
+    assert sorted(by) == ["alerts:multer@apps.api.package.json", "alerts:undici@frontend.package-lock.json", "alerts:undici@package-lock.json"]
     group = by["alerts:undici@frontend.package-lock.json"]
     assert group.number is None and group.kind == "security_alerts"
     assert group.title == "[HIGH] undici: 2 open alerts in frontend/package-lock.json, patched in 8.11.2"
@@ -767,19 +767,20 @@ async def test_security_alerts_group_by_package_and_manifest():
     assert "/" not in group.key.split(":", 1)[1], "the key is one URL path segment"
     assert gi.alert_numbers(group.to_dict()) == [6, 9]
     assert gi.alert_reference(group.to_dict()) == "alerts #6 and #9"
-    # A lone alert keeps the item it always had.
-    assert by["alert:7"].number == 7 and by["alert:7"].title.startswith("[HIGH] multer")
-    assert gi.alert_reference(by["alert:7"].to_dict()) == "alert #7"
+    # A lone alert keeps its own title, number and page, under the same kind of key (B36).
+    assert by["alerts:multer@apps.api.package.json"].number == 7 and by["alerts:multer@apps.api.package.json"].title.startswith("[HIGH] multer")
+    assert gi.alert_reference(by["alerts:multer@apps.api.package.json"].to_dict()) == "alert #7"
     goal = gi.build_goal(group)
     assert goal.startswith("Fix Dependabot security alerts #6 and #9: [HIGH] undici: 2 open alerts")
     assert "bump to at least 8.11.2" in goal and "https://github.com/o/proj/security/dependabot" in goal
-    assert gi.build_goal(by["alert:7"]).startswith("Fix Dependabot security alert #7: [HIGH] multer")
-    # Closing one of the two changes the fingerprint and the group becomes the lone alert's own item.
+    assert gi.build_goal(by["alerts:multer@apps.api.package.json"]).startswith("Fix Dependabot security alert #7: [HIGH] multer")
+    # Closing one of the two changes the fingerprint; the key stays, so the
+    # item keeps its task and attempts (B36).
     before = group.fingerprint
     gh.alerts = [a for a in gh.alerts if a["number"] != 6]
     after = {i.key: i for i in await gi.discover(gh, "proj", "o/proj", _proj(security_alerts="propose"))}
-    assert "alerts:undici@frontend.package-lock.json" not in after and after["alert:9"].number == 9
-    assert after["alert:9"].fingerprint != before
+    lone = after["alerts:undici@frontend.package-lock.json"]
+    assert lone.number == 9 and lone.fingerprint != before
 
 
 
@@ -912,3 +913,200 @@ async def test_the_last_scan_time_is_read_for_the_default_branch():
     gh = GH()
     assert await gh.last_scan_at("o/r") == 1792175700.0
     assert gh.asked == ("/repos/o/r/code-scanning/analyses", {"ref": "refs/heads/trunk", "per_page": 1})
+
+
+
+# ---------------------------------------------------------------------------
+# audit 2026-10-22: B35 (every item), B36 (stable Dependabot keys), B37
+# (settle per kind)
+# ---------------------------------------------------------------------------
+
+class PagedStore(FakeStore):
+    """Pages like Postgres: newest updated first, at most `cap` rows a call,
+    honouring offset. `asearch(limit=200)` saw only the newest 200."""
+
+    def __init__(self, cap=100):
+        super().__init__()
+        self.cap = cap
+
+    async def asearch(self, ns, limit=10, offset=0):
+        rows = sorted(((k, v) for (n, k), v in self.data.items() if n == ns),
+                      key=lambda kv: kv[1].get("updated_at", 0), reverse=True)
+        return [SimpleNamespace(key=k, value=v) for k, v in rows[offset:offset + min(limit, self.cap)]]
+
+    async def adelete(self, ns, key):
+        self.data.pop((ns, key), None)
+
+
+async def _poll(store, gh, proj_patch, *, live=(), finished=None):
+    cfg = _config()
+    settings = gs.apply_patch(cfg, gs.normalize({}), {"projects": {"proj": proj_patch}})
+    created = []
+
+    async def create_task(repo, goal, budget, route):
+        created.append(goal)
+        return f"task-{len(created)}"
+
+    async def notify(text, repo):
+        return None
+
+    async def open_auto(repo):
+        return 0
+
+    async def live_tasks(repo):
+        return set(live)
+
+    async def finished_tasks(repo):
+        return dict(finished or {})
+
+    summary = await gi.poll_project(store, cfg, settings, "proj", create_task=create_task, notify=notify,
+                                    open_auto_count=open_auto, client=gh, live_tasks=live_tasks,
+                                    finished_tasks=finished_tasks)
+    return summary, created
+
+
+@pytest.mark.asyncio
+async def test_the_oldest_of_201_items_is_listed_actionable_and_resolved(monkeypatch):
+    """B35: list_items read the 200 most recently updated rows. The 201st
+    vanished from the list, approve/dismiss/snooze answered 404, and the
+    poll never resolved it."""
+    from agent.routers import github as github_routes
+
+    monkeypatch.setattr(gi, "resolve_slug", lambda repo: "o/proj")
+    _with_checks(monkeypatch)
+    store = PagedStore()
+    ns = (gi.NAMESPACE, "proj")
+    for n in range(201):
+        store.data[(ns, f"ci:{n:012d}:ci")] = {"key": f"ci:{n:012d}:ci", "kind": "ci_failures", "repo": "proj",
+                                               "title": f"ci {n}", "state": "proposed", "fingerprint": "f",
+                                               "updated_at": 1000.0 + n, "created_at": 1.0}
+    oldest = "ci:000000000000:ci"
+    assert len(await gi.list_items(store, "proj")) == 201
+    app = SimpleNamespace(state=SimpleNamespace(store=store))
+    out = await github_routes._github_act(app, "proj", oldest, "snooze", days=1, actor="me")
+    assert out["item"]["state"] == "snoozed"
+
+    summary, _ = await _poll(store, FakeGitHub(checks=[]), {"policies": {"ci_failures": "propose"}})
+    assert summary["resolved"] == 201
+    assert store.data[(ns, oldest)]["state"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_resolved_items_are_pruned_after_a_month(monkeypatch):
+    monkeypatch.setattr(gi, "resolve_slug", lambda repo: "o/proj")
+    _with_checks(monkeypatch)
+    store = PagedStore()
+    ns = (gi.NAMESPACE, "proj")
+    old = time.time() - gi.PRUNE_RESOLVED_AFTER_S - 60
+    store.data[(ns, "ci:old:ci")] = {"key": "ci:old:ci", "kind": "ci_failures", "state": "resolved", "updated_at": old}
+    store.data[(ns, "ci:new:ci")] = {"key": "ci:new:ci", "kind": "ci_failures", "state": "resolved",
+                                     "updated_at": time.time()}
+    store.data[(ns, "pr:1")] = {"key": "pr:1", "kind": "dependabot_prs", "state": "dismissed", "updated_at": old,
+                                "fingerprint": "abc123def456"}
+    await _poll(store, FakeGitHub(prs=[_pr(1, "dependabot[bot]")]), {"policies": {"dependabot_prs": "propose"}})
+    keys = {k for (_, k) in store.data}
+    assert "ci:old:ci" not in keys and "ci:new:ci" in keys
+    assert store.data[(ns, "pr:1")]["state"] == "dismissed", "dismissed and still open on GitHub stays dismissed"
+
+
+@pytest.mark.asyncio
+async def test_a_second_advisory_on_the_package_keeps_the_task_already_on_it(monkeypatch):
+    """B36 (grow): a task ran on `alert:5`; a second advisory arrived and the
+    new group item started a second task while `alert:5` was resolved as
+    no longer open."""
+    monkeypatch.setattr(gi, "resolve_slug", lambda repo: "o/proj")
+    _with_checks(monkeypatch)
+    store = PagedStore()
+    ns = (gi.NAMESPACE, "proj")
+    store.data[(ns, "alert:5")] = {"key": "alert:5", "kind": "security_alerts", "repo": "proj", "number": 5,
+                                   "title": "t", "state": "task_created", "task_id": "t1", "fingerprint": "open:GHSA-5",
+                                   "approval_nonce": None, "attempts": [], "updated_at": 1000.0, "created_at": 900.0}
+    gh = FakeGitHub(alerts=[_dep_alert(5, "undici", "package-lock.json", "high", "< 8", "8.0.0"),
+                            _dep_alert(6, "undici", "package-lock.json", "low", "< 8.1", "8.1.0")])
+    summary, created = await _poll(store, gh, {"policies": {"security_alerts": "auto"}, "max_open_auto": 5},
+                                   live={"t1"})
+    assert created == [] and summary["resolved"] == 0
+    items = await gi.list_items(store, "proj")
+    assert set(items) == {"alerts:undici@package-lock.json"}
+    item = items["alerts:undici@package-lock.json"]
+    assert item["state"] == "task_created" and item["task_id"] == "t1" and item["created_at"] == 900.0
+
+
+@pytest.mark.asyncio
+async def test_a_group_shrinking_to_one_alert_waits_for_its_finished_task(monkeypatch):
+    """B36 (shrink): a group's task finished with one alert left, and
+    `alert:9` started at once with no settle wait and no attempts."""
+    monkeypatch.setattr(gi, "resolve_slug", lambda repo: "o/proj")
+    _with_checks(monkeypatch)
+    store = PagedStore()
+    ns = (gi.NAMESPACE, "proj")
+    key = "alerts:undici@package-lock.json"
+    store.data[(ns, key)] = {"key": key, "kind": "security_alerts", "repo": "proj", "number": None, "title": "t",
+                             "summary": "undici\n#6 [LOW] a\n#9 [HIGH] b", "state": "task_created", "task_id": "t1",
+                             "fingerprint": "old", "attempts": [], "updated_at": 1000.0, "created_at": 900.0}
+    gh = FakeGitHub(alerts=[_dep_alert(9, "undici", "package-lock.json", "high", "< 8", "8.0.0")])
+    _, created = await _poll(store, gh, {"policies": {"security_alerts": "auto"}, "max_open_auto": 5},
+                             live={"t1"}, finished={"t1": time.time() - 60})
+    assert created == []
+    assert store.data[(ns, key)]["state"] == "awaiting_rescan" and store.data[(ns, key)]["task_id"] == "t1"
+
+
+@pytest.mark.asyncio
+async def test_an_approve_link_naming_the_old_alert_key_finds_the_item():
+    store = PagedStore()
+    ns = (gi.NAMESPACE, "proj")
+    store.data[(ns, "alerts:undici@x")] = {"key": "alerts:undici@x", "kind": "security_alerts", "number": 5}
+    assert (await gi.get_item(store, "proj", "alert:5"))["key"] == "alerts:undici@x"
+    assert await gi.get_item(store, "proj", "alert:6") is None
+
+
+def _review_item(review_id=5, head="abc123def456"):
+    return gi.Item(key="review:3", kind="review_requests", repo="proj", title="t", url="u", number=3,
+                   fingerprint=f"{head}:{review_id}")
+
+
+def test_a_review_item_stays_with_its_finished_task_until_a_new_review():
+    """B37: a merged fix never clears a CHANGES_REQUESTED review, so the
+    item came back 45 minutes later as "GitHub still reports it"."""
+    proj = _proj(review_requests="propose")
+    existing = {"review:3": {**_review_item().to_dict(), "state": "task_created", "task_id": "t1"}}
+    later = 1000.0 + gi.SETTLE_S * 10
+    # The task pushed to the branch: a new head, the same review.
+    same, _ = gi.decide(existing, [_review_item(head="fffffffff000")], proj, open_auto=0, live_tasks={"t1"},
+                        finished_tasks={"t1": 1000.0}, now=later)
+    assert [(d.action, d.item.state) for d in same] == [("none", "awaiting_rescan")]
+    stored = {"review:3": same[0].item.to_dict()}
+    quiet, _ = gi.decide(stored, [_review_item(head="fffffffff000")], proj, open_auto=0, live_tasks={"t1"},
+                         finished_tasks={"t1": 1000.0}, now=later + 1)
+    assert quiet == []
+    again, _ = gi.decide(stored, [_review_item(review_id=9, head="fffffffff000")], proj, open_auto=0,
+                         live_tasks={"t1"}, finished_tasks={"t1": 1000.0}, now=later + 2)
+    assert [(d.action, d.item.state) for d in again] == [("propose", "proposed")]
+    assert "new review" in again[0].reason and again[0].item.attempts[0]["task_id"] == "t1"
+    goal = gi.build_goal(again[0].item)
+    assert "asked for changes again" in goal and "scanner" not in goal
+
+
+def test_a_dependabot_pr_item_stays_with_its_task_until_the_pr_closes():
+    """B37: Dependabot is often slower than 45 minutes to close a PR the fix
+    superseded, and it may rebase it first."""
+    proj = _proj(dependabot_prs="propose")
+    existing = {"pr:1": {**_item("pr:1", fp="a").to_dict(), "state": "task_created", "task_id": "t1"}}
+    late, _ = gi.decide(existing, [_item("pr:1", fp="rebased")], proj, open_auto=0, live_tasks={"t1"},
+                        finished_tasks={"t1": 1000.0}, now=1000.0 + gi.SETTLE_S * 20)
+    assert [(d.action, d.item.state) for d in late] == [("none", "awaiting_rescan")]
+    assert "pull request to close" in late[0].reason
+    closed, gone = gi.decide({"pr:1": late[0].item.to_dict()}, [], proj, open_auto=0, live_tasks={"t1"},
+                             finished_tasks={"t1": 1000.0}, now=1000.0 + gi.SETTLE_S * 21)
+    assert closed == [] and gone == ["pr:1"]
+
+
+def test_a_returning_dependabot_alert_gets_dependabot_advice_not_a_scanners():
+    item = {"kind": "security_alerts", "title": "[HIGH] undici", "url": "u", "number": 9, "summary": "s",
+            "attempts": [{"task_id": "3320a0ee-x", "finished_at": 1000.0, "still_open": [9]}]}
+    goal = gi.build_goal(item)
+    assert "GitHub still reports #9." in goal and "lockfile" in goal
+    assert "scanner" not in goal and "re-scanning" not in goal
+    ci = {"kind": "ci_failures", "title": "ci failed", "url": "u", "summary": "s",
+          "attempts": [{"task_id": "3320a0ee-x", "finished_at": 1000.0, "still_open": []}]}
+    assert "still reports the check failing" in gi.build_goal(ci)

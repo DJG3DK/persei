@@ -68,8 +68,7 @@ async def _github_act(app, repo: str, key: str, action: str, *, nonce: str | Non
 
 async def _github_act_locked(app, repo: str, key: str, action: str, *, nonce: str | None,
                              days: float | None, actor: str) -> dict:
-    items = await github_inbox.list_items(app.state.store, repo)
-    item = items.get(key)
+    item = await github_inbox.get_item(app.state.store, repo, key)
     if not item:
         raise HTTPException(404, "that item is no longer in the inbox")
     if nonce is not None and item.get("approval_nonce") != nonce:
@@ -181,8 +180,7 @@ async def github_approve_page(request: Request, t: str = ""):
         data = github_inbox.verify_approval(request.app.state.config, t)
     except ValueError as e:
         return _approve_html(f"<h1>Link problem</h1><p class=err>{_link_problem(e)}</p>")
-    items = await github_inbox.list_items(request.app.state.store, data["r"])
-    item = items.get(data["k"])
+    item = await github_inbox.get_item(request.app.state.store, data["r"], data["k"])
     if not item:
         return _approve_html("<h1>Gone</h1><p class=muted>That item is no longer in the inbox.</p>")
     if item.get("approval_nonce") != data["n"]:
