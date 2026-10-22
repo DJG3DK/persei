@@ -540,11 +540,76 @@ def _expand_local_assignments(command: str) -> str:
     return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", _sub, command)
 
 
-# A heredoc fed to one of these only becomes a file's (or the terminal's)
-# contents: nothing in its body runs. Fed to anything else -- a shell, an
-# interpreter, ssh -- the body may well run, so it stays in for the gate.
+# A heredoc fed to one of these, and written to a file, only becomes that
+# file's contents: nothing in its body runs. Fed to anything else -- a shell,
+# an interpreter, ssh -- or piped onward, the body may well run, so it stays
+# in for the gate.
 _HEREDOC_TEXT_SINKS = frozenset({"cat", "tee"})
 _HEREDOC_RE = re.compile(r"<<(-?)\s*(?:'([^']+)'|\"([^\"]+)\"|\\?([A-Za-z_][A-Za-z0-9_]*))")
+_HEREDOC_OP_RE = re.compile(r"(?<!<)<<(?!<)")                 # not a `<<<` here-string
+# What ends a simple command, read on a masked line. `>|` is a clobber
+# redirect, and `>&` and `&>` are redirects, not a pipe or a background `&`.
+_COMMAND_END_RE = re.compile(r"\|\||&&|;|(?<!>)\|(?!\|)|(?<![<>])&(?!>)|[()]")
+_STDOUT_REDIRECT_RE = re.compile(r"(?<![0-9<>&])(?:1|&)?>>?\|?\s*(?=[^\s&|;<>()])")
+_ANY_REDIRECT_RE = re.compile(r"(?<![<>&])\d*&?[<>]{1,2}[|&]?\s*[^\s&|;<>()]+")
+
+
+def _masked_line(command: str, start: int) -> tuple[str, int]:
+    """The logical line from `start` with quoted text and comments blanked to
+    the same length, and the index it ends at: the first newline outside
+    quotes that no backslash continues. A `<<` in quotes or after `#` is then
+    no operator, and an index into the mask is an index into the command."""
+    out: list[str] = []
+    i, n, quote = start, len(command), None
+    while i < n:
+        c = command[i]
+        if quote is None and c == "\n":
+            break
+        if quote != "'" and c == "\\" and i + 1 < n:
+            out.append("__")
+            i += 2
+            continue
+        if quote:
+            out.append(c if c == quote else "_")
+            quote = None if c == quote else quote
+        elif c in "'\"":
+            quote = c
+            out.append(c)
+        elif c == "#" and (i == start or command[i - 1] in " \t;&|()"):
+            stop = command.find("\n", i)
+            stop = n if stop < 0 else stop
+            out.append(" " * (stop - i))
+            i = stop
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out), i
+
+
+def _heredoc_is_inert(masked: str, raw: str, at: int) -> bool:
+    """Is the heredoc whose `<<` is at `at` only written to a file? Its
+    command is `cat` with a stdout redirect or `tee` with a file, and its
+    output goes nowhere else: no pipe before the command ends, and no process
+    substitution on the line."""
+    if ">(" in masked or "<(" in masked:
+        return False
+    before = list(_COMMAND_END_RE.finditer(masked, 0, at))
+    begin = before[-1].end() if before else 0
+    after = _COMMAND_END_RE.search(masked, at)
+    if after and after.group() == "|":
+        return False                                          # `cat <<X | bash` runs the body
+    stop = after.start() if after else len(masked)
+    words = raw[begin:stop].split()
+    head = words[0].rsplit("/", 1)[-1] if words else ""
+    if head not in _HEREDOC_TEXT_SINKS:
+        return False
+    simple = _HEREDOC_RE.sub(lambda m: " " * len(m.group()), masked[begin:stop])
+    if _STDOUT_REDIRECT_RE.search(simple):
+        return True
+    if head == "cat":
+        return False                                          # to the terminal, or to whatever reads it
+    return any(not w.startswith("-") for w in _ANY_REDIRECT_RE.sub(" ", simple).split()[1:])
 
 
 def _strip_inert_heredocs(command: str) -> str:
@@ -556,28 +621,47 @@ def _strip_inert_heredocs(command: str) -> str:
     not resolve `$d`, and parked the task on an approval no one was there to
     give. Two of the first five tasks blocked that way. Writing a script runs
     none of it; running it later is a separate command, judged then.
+
+    2026-10-22 audit, A19: the first version judged a heredoc by the command
+    before `<<` alone, so `cat <<'X' | bash` -- a body that runs -- was
+    stripped too, and so was a `<<` in quotes or after `#`. Bodies are now
+    consumed in the order their operators appear, a body something may run is
+    kept (and read as a script itself), and an operator that will not parse
+    leaves the rest of the command as it is.
     """
-    lines = command.split("\n")
     out: list[str] = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        out.append(line)
-        i += 1
-        for m in _HEREDOC_RE.finditer(line):
-            # The simple command the heredoc belongs to: text after the last
-            # separator before the operator.
-            before = re.split(r"&&|\|\||;|\||\(", line[:m.start()])[-1].split()
-            if not before or before[0].rsplit("/", 1)[-1] not in _HEREDOC_TEXT_SINKS:
-                continue
-            delimiter = m.group(2) or m.group(3) or m.group(4)
-            strip_tabs = m.group(1) == "-"
-            while i < len(lines):
-                body = lines[i].lstrip("\t") if strip_tabs else lines[i]
-                i += 1
-                if body == delimiter:
+    pos, n = 0, len(command)
+    while pos < n:
+        masked, end = _masked_line(command, pos)
+        raw = command[pos:end]
+        out.append(raw)
+        heredocs = []
+        for op in _HEREDOC_OP_RE.finditer(masked):
+            m = _HEREDOC_RE.match(raw, op.start())
+            if m is None:
+                if end < n:
+                    out.append(command[end + 1:])             # bodies unknown: strip nothing more
+                return "\n".join(out)
+            heredocs.append((m.group(2) or m.group(3) or m.group(4), m.group(1) == "-",
+                             _heredoc_is_inert(masked, raw, op.start())))
+        pos = end + 1
+        for delimiter, strip_tabs, inert in heredocs:
+            body: list[str] = []
+            closing = None
+            while pos <= n:
+                nl = command.find("\n", pos)
+                nl = n if nl < 0 else nl
+                line = command[pos:nl]
+                pos = nl + 1
+                if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                    closing = line
                     break
-            break                                             # one written-out body per line is enough
+                body.append(line)
+            if not inert:
+                if body:
+                    out.append(_strip_inert_heredocs("\n".join(body)))
+                if closing is not None:
+                    out.append(closing)
     return "\n".join(out)
 
 

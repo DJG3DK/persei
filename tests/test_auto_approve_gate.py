@@ -380,3 +380,41 @@ def test_a_heredoc_a_shell_runs_is_still_read():
 def test_a_delete_outside_the_written_text_is_still_read():
     assert _losses("cat > x.sh <<EOF\nrm -rf a\nEOF\nrm -rf src") == ["/workspace/src"]
     assert _losses("rm -rf src && cat > x.sh <<'EOF'\necho hi\nEOF") == ["/workspace/src"]
+
+
+# 2026-10-22 audit, A19: each of these runs `rm -rf src` in a real shell, and
+# the first heredoc fix read all of them as a script being written.
+HEREDOCS_THAT_RUN = [
+    "cat <<'X' | bash\nrm -rf src\nX",
+    "tee x <<'X' | sh\nrm -rf src\nX",
+    "tee /dev/null <<'X' |& sh\nrm -rf src\nX",
+    "cat > x.sh <<'X' | bash\nrm -rf src\nX",
+    "cat <<'X' > >(bash)\nrm -rf src\nX",
+    "bash <<A; cat > x.sh <<B\nrm -rf src\nA\necho hi\nB",   # A's body is the first one
+    "cat # <<X\nrm -rf src\nX",                              # an operator in a comment is none
+    "cat '<<X'\nrm -rf src\nX",                              # nor is one in quotes
+    'echo "a <<X"; cat\nrm -rf src\nX',
+    "cat <<X\nrm -rf src\nX",                                # to the terminal: not a write, so read
+    "cat << $D > x\nrm -rf src\n$D",                        # a delimiter not read here
+]
+
+
+@pytest.mark.parametrize("command", HEREDOCS_THAT_RUN)
+def test_a_heredoc_piped_onward_or_not_written_is_still_read(command):
+    assert "/workspace/src" in _losses(command), command
+    assert INTERRUPT_ON_AUTO_APPROVE["bash"]["when"](_req(command)) is True
+
+
+def test_heredocs_written_out_are_still_text():
+    assert _losses("cat >> x.sh <<'X'\nrm -rf src\nX") == []
+    assert _losses("cat <<'X' >x.sh && echo ok\nrm -rf src\nX") == []
+    assert _losses("cat >| x.sh <<'X' || exit 1\nrm -rf src\nX") == []
+    assert _losses("echo hi | cat > x.sh <<'X'\nrm -rf src\nX") == []
+    assert _losses("tee -a x.sh >/dev/null <<'X'\nrm -rf src\nX") == []
+    # Two bodies on one line, consumed in order: the shell's is read.
+    assert _losses("cat > a <<A; bash <<B\nrm -rf a\nA\nrm -rf src\nB") == ["/workspace/src"]
+    assert _losses("cat > a <<A; cat > b <<B\nrm -rf a\nA\nrm -rf b\nB\nrm -rf src") == ["/workspace/src"]
+    # A heredoc inside a body a shell runs is judged as part of that script.
+    assert _losses("bash <<'O'\ncat > x <<'I'\nrm -rf a\nI\nrm -rf src\nO") == ["/workspace/src"]
+    # A here-string is not a heredoc: nothing after it is swallowed.
+    assert _losses("cat > x <<< 'hi'\nrm -rf src") == ["/workspace/src"]
