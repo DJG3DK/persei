@@ -5,7 +5,7 @@
 # (get_flat_dependant, removed in 0.140.7); nothing here touches FastAPI
 # internals, so a bump is expected to be routine. CI installs exactly this
 # file into its own venv and runs the router's tests with it.
-fastapi==0.141.1
+fastapi==0.149.0
 uvicorn[standard]==0.54.0
 httpx==0.28.1
 pyyaml==6.0.3
