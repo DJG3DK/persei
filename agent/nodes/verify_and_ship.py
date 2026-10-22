@@ -502,18 +502,43 @@ async def _verify_and_ship(state: AgentState, config: Config, store: BaseStore |
         return await _verify_and_ship_gated(state, config, store, repo)
 
 
+_ALREADY_FIXED = "already fixed on main -- concluding without a merge"
+
+
+def _concluded_before(state: AgentState) -> bool:
+    """Has this task merged, opened its pull request, or concluded "already
+    fixed" on an earlier pass? Then it is back because the operator reopened
+    it with a note, and that note is the work now -- whatever the alerts say.
+    Its own first run is what closed them."""
+    if state.get("pending_feedback"):
+        return True
+    for entry in state.get("execution_log") or []:
+        summary = str(entry.get("summary") or "")
+        if entry.get("node") == "verify_and_ship" and (
+                summary == _ALREADY_FIXED or summary.startswith(("merged", "pull request opened"))):
+            return True
+    return False
+
+
 async def _already_fixed(state: AgentState, config: Config | None) -> dict | None:
     from agent import inbox_alerts
+    if _concluded_before(state):
+        return None
     note = await inbox_alerts.already_fixed(state["repo"], state.get("goal") or "", config)
     if not note:
         return None
     return {
         "committed_sha": None, "pending_merge_approval": None, "merge_approved_sha": None,
-        "review_gate_result": state.get("review_gate_result") or {},
+        # None, not the last review: nothing of this task shipped, and
+        # _write_episode reads any review result as "shipped" (2026-10-22
+        # audit, A20: an empty dict here recorded these as shipped episodes,
+        # so consolidation took their reflections as confirmed and the
+        # benchmarks counted them in ship_rate).
+        "review_gate_result": None,
         "stale_pending_review_streak": 0,
         "execution_log": [{
             "node": "verify_and_ship", "step_id": None,
-            "summary": "already fixed on main -- concluding without a merge",
+            "summary": _ALREADY_FIXED,
             "detail": note, "cost_usd": 0.0,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         }],

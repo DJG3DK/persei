@@ -1308,3 +1308,41 @@ async def test_a_task_whose_alerts_are_open_goes_on_to_the_slot(monkeypatch):
     monkeypatch.setattr(inbox_alerts, "already_fixed", still_open)
     monkeypatch.setattr(vs, "_verify_and_ship_gated", gated)
     assert await vs._verify_and_ship(_state(), config=None) == {"reached": True}
+
+
+async def test_an_already_fixed_ending_is_not_a_shipped_episode(monkeypatch):
+    """2026-10-22 audit, A20: the conclusion carried `{}` as its review
+    result, and _write_episode read anything but None as shipped."""
+    from agent import inbox_alerts
+
+    async def closed(repo, goal, config):
+        return "Dependabot alert #6 on o/proj is no longer open: nothing left to ship."
+
+    monkeypatch.setattr(inbox_alerts, "already_fixed", closed)
+    store = FakeStore()
+    state = _state(goal="Fix Dependabot security alert #6", review_gate_result={"verdict": "CHANGES"})
+    result = await vs.verify_and_ship_node(state, _config(), store)
+    assert result["review_gate_result"] is None
+    record = await _only_episode(store, state["repo"])
+    assert record["outcome"] == "done_no_changes"
+
+
+@pytest.mark.parametrize("earlier", [
+    {"pending_feedback": "[operator] also bump the lockfile"},
+    {"execution_log": [{"node": "verify_and_ship", "summary": "merged and pushed to GitHub"}]},
+    {"execution_log": [{"node": "verify_and_ship", "summary": "pull request opened: https://x/pull/1"}]},
+    {"execution_log": [{"node": "verify_and_ship", "summary": vs._ALREADY_FIXED}]},
+])
+async def test_a_reopened_task_is_not_concluded_by_the_alerts_its_first_run_closed(monkeypatch, earlier):
+    from agent import inbox_alerts
+
+    async def never(repo, goal, config):
+        raise AssertionError("a reopened task must not ask whether its alerts are closed")
+
+    async def gated(state, config, store, repo):
+        return {"reached": True}
+
+    monkeypatch.setattr(inbox_alerts, "already_fixed", never)
+    monkeypatch.setattr(vs, "_verify_and_ship_gated", gated)
+    state = _state(goal="Fix Dependabot security alert #6", **earlier)
+    assert await vs._verify_and_ship(state, config=None) == {"reached": True}
