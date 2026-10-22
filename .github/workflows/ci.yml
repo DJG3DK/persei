@@ -71,8 +71,10 @@ jobs:
           # package, which is the whole reason that is affordable.
           pip install -r requirements-cli.txt
           # The planner's repo search (agent/tools/planning_tools.py) shells
-          # out to ripgrep; its tests run the real binary.
-          sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+          # out to ripgrep; its tests run the real binary. makensis compiles
+          # the Windows installer's hooks (tests/test_windows_installer_hooks.py),
+          # which nothing else builds before a tag.
+          sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep nsis
           # tests/test_review_services_gated.py starts the review dashboard
           # for real, and it needs express. Without this it would skip -- see
           # REQUIRE_SERVICE_TESTS on the pytest step, which makes that a failure.
