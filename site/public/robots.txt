@@ -13,4 +13,9 @@ Allow: /
 # Nothing there is indexable and crawling it only burns budget.
 Disallow: /api/
 
+# The download form and the redirects behind it (2026-10-22): one page per
+# platform, each marked noindex, and redirects that end in a binary.
+Disallow: /get/
+Disallow: /download/
+
 Sitemap: https://perseiagent.ai/sitemap.xml
