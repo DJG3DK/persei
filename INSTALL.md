@@ -151,6 +151,13 @@ Then open `http://127.0.0.1:8100` on your own machine. No domain, no
 certificate, no open ports, and the console stays invisible to the internet.
 For a single operator this is the right answer.
 
+Cookies ignore ports, so every other program serving pages on
+`127.0.0.1` or `localhost` on your machine (a dev server, say) is sent the
+console's session cookie too. The console refuses their requests where it
+can tell, but a name of its own keeps the cookie away from them entirely:
+open `http://persei.localhost:8100` instead, which browsers resolve to
+loopback and treat as a host of its own.
+
 **2. A domain with HTTPS.** Needed for access from anywhere, from a phone, or
 for more than one person. `install.sh` sets it up:
 

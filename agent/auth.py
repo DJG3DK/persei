@@ -985,6 +985,34 @@ def require_admin(user: User) -> None:
         raise HTTPException(403, "admin only")
 
 
+def ws_origin_allowed(headers) -> bool:
+    """Whether a WebSocket handshake comes from the console's own page.
+
+    A WebSocket is not bound by the same-origin policy, and on loopback
+    SameSite=strict does not help: cookies ignore ports, and another
+    localhost port is the same site, so a dev server's page on
+    127.0.0.1:5000 sent agent_session and opened a task stream (audit B31,
+    2026-10-22). A browser always sends Origin on a handshake and cannot
+    forge Host, so the two must name the same host -- and the same port
+    when Host carries one (nginx's $host does not). No Origin is not a
+    browser, and a cookie stolen outright is not what this guards."""
+    origin = (headers.get("origin") or "").strip()
+    if not origin:
+        return True
+    from urllib.parse import urlsplit  # noqa: PLC0415
+
+    try:
+        o = urlsplit(origin)
+        h = urlsplit("//" + (headers.get("host") or "").strip())
+        o_host, h_host = (o.hostname or "").lower(), (h.hostname or "").lower()
+        o_port, h_port = o.port or (443 if o.scheme == "https" else 80), h.port
+    except ValueError:
+        return False
+    if not o_host or o_host != h_host:
+        return False
+    return h_port is None or h_port == o_port
+
+
 async def get_user_from_ws_cookie(pool: AsyncConnectionPool, cookies: dict) -> User | None:
     token = cookies.get(SESSION_COOKIE_NAME)
     if not token:

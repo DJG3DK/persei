@@ -155,7 +155,8 @@ def cookie_secure(request: Request | None) -> bool:
     host = (request.headers.get("host") or "").strip().lower()
     hostname = host.rsplit(":", 1)[0] if not host.startswith("[") else host.split("]")[0] + "]"
     forwarded = (request.headers.get("x-forwarded-proto") or "").lower()
-    return not (request.url.scheme == "http" and hostname in _LOOPBACK_HOSTS
+    loopback = hostname in _LOOPBACK_HOSTS or hostname.endswith(".localhost")
+    return not (request.url.scheme == "http" and loopback
                 and forwarded in ("", "http"))
 
 

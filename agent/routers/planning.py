@@ -276,6 +276,9 @@ async def stream_planning_session(ws: WebSocket, session_id: str):
     # accept() is ever called -- validate first and close outright (never
     # accept then immediately drop) for an unauthorized or repo-mismatched
     # connection attempt.
+    if not auth.ws_origin_allowed(ws.headers):
+        await ws.close(code=4403)
+        return
     user = await auth.get_user_from_ws_cookie(ws.app.state.auth_pool, ws.cookies)
     if not user:
         await ws.close(code=4401)

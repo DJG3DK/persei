@@ -16,7 +16,8 @@ def _req(host: str, scheme: str = "http", forwarded: str | None = None) -> Reque
                     "server": ("127.0.0.1", 8100), "method": "POST", "query_string": b""})
 
 
-@pytest.mark.parametrize("host", ["localhost:8100", "127.0.0.1:8100", "localhost", "[::1]:8100", "LOCALHOST:8100"])
+@pytest.mark.parametrize("host", ["localhost:8100", "127.0.0.1:8100", "localhost", "[::1]:8100", "LOCALHOST:8100",
+                                  "persei.localhost:8100"])
 def test_plain_http_to_loopback_is_not_secure(host):
     assert cookie_secure(_req(host)) is False
 

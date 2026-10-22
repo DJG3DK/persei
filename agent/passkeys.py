@@ -96,6 +96,12 @@ class RelyingParty:
 _LOCAL_HOSTS = {"localhost"}
 
 
+def is_local_host(host: str) -> bool:
+    """localhost, or a name under it (persei.localhost, which INSTALL §3a
+    suggests so the console's cookie is not shared with every port)."""
+    return host in _LOCAL_HOSTS or host.endswith(".localhost")
+
+
 def configured_origins() -> frozenset[str]:
     """WEBAUTHN_ORIGINS: the addresses the console is served at, as
     scheme://host[:port], comma-separated."""
@@ -123,7 +129,7 @@ def relying_party(origin_header: str | None, *, local_console: str | None = None
         raise PasskeyError("unexpected Origin")
     if host.replace(".", "").isdigit() or ":" in host:
         raise PasskeyError("passkeys need the dashboard on a host name, not an IP address")
-    if parts.scheme != "https" and not (parts.scheme == "http" and host in _LOCAL_HOSTS):
+    if parts.scheme != "https" and not (parts.scheme == "http" and is_local_host(host)):
         raise PasskeyError("passkeys need https (or localhost)")
     configured = (os.environ.get("WEBAUTHN_RP_ID") or "").strip().lower()
     if configured:
@@ -137,7 +143,7 @@ def relying_party(origin_header: str | None, *, local_console: str | None = None
     if allowed:
         if origin not in allowed:
             raise PasskeyError("this page is not the dashboard's address (WEBAUTHN_ORIGINS)")
-    elif host in _LOCAL_HOSTS:
+    elif is_local_host(host):
         # rp ids ignore ports: every program on this machine serving a page
         # on localhost shares this one.
         if not local_console or parts.netloc.lower() != local_console.lower():

@@ -139,6 +139,7 @@ def test_another_localhost_port_is_not_the_console(monkeypatch, origin, console)
     ("localhost:5173", ("127.0.0.1", 8100), "", None),
     ("localhost:8200", ("172.18.0.4", 8100), "127.0.0.1", "localhost:8200"),
     ("localhost:8200", ("172.18.0.4", 8100), "0.0.0.0", None),
+    ("persei.localhost:8100", ("127.0.0.1", 8100), "", "persei.localhost:8100"),
     ("agent.example.com", ("127.0.0.1", 8100), "", None),
 ])
 def test_the_local_console_comes_from_the_server_side(monkeypatch, host, server, bind, expected):

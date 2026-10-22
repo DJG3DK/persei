@@ -633,6 +633,9 @@ async def delete_task(request: Request, task_id: str, repo: str, user: User = De
 
 @router.websocket("/api/tasks/{task_id}/stream")
 async def stream_task(ws: WebSocket, task_id: str):
+    if not auth.ws_origin_allowed(ws.headers):
+        await ws.close(code=4403)
+        return
     user = await auth.get_user_from_ws_cookie(ws.app.state.auth_pool, ws.cookies)
     if not user:
         await ws.close(code=4401)

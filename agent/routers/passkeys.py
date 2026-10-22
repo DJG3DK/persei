@@ -56,7 +56,7 @@ def _local_console(request: Request) -> str | None:
     container), where nothing remote can send it."""
     host = (request.headers.get("host") or "").strip().lower()
     name, _, port = host.rpartition(":")
-    if name != "localhost" or not port.isdigit():
+    if not passkeys.is_local_host(name) or not port.isdigit():
         return None
     server = request.scope.get("server") or (None, None)
     bind = os.environ.get("BIND_ADDRESS", "").strip().strip("[]").lower()
