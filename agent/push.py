@@ -34,10 +34,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import ipaddress
 import logging
 import os
+import socket
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from agent import paths
 
@@ -138,6 +141,50 @@ def _payload(title: str, body: str, url: str = "/", tag: str | None = None) -> s
     })
 
 
+def endpoint_refusal(endpoint: str) -> str | None:
+    """Why this subscription endpoint must not be stored, or None. The
+    check that needs no DNS: https, a host, and not a literal private
+    address or localhost. A real browser's endpoint is always a push
+    service on the public internet; anything else is someone pointing the
+    server's own POST at an internal port, with `sent: 1` from the test
+    button as the oracle (audit B29, 2026-10-22). The name is resolved
+    again at every send (_resolves_public)."""
+    from agent.tools.url_guard import _is_blocked_address  # noqa: PLC0415
+
+    try:
+        parts = urlsplit(endpoint)
+        host = (parts.hostname or "").strip("[]").lower()
+    except ValueError:
+        return "not a valid URL"
+    if parts.scheme != "https":
+        return "a push endpoint must be https"
+    if not host:
+        return "a push endpoint needs a host"
+    if host == "localhost" or host.endswith(".localhost"):
+        return "a push endpoint must be a public push service"
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    return "a push endpoint must be a public push service" if _is_blocked_address(host) else None
+
+
+def _resolves_public(endpoint: str) -> bool:
+    """Every address the endpoint's host resolves to is public, checked
+    with the browse tool's own address rule."""
+    from agent.tools.url_guard import _is_blocked_address  # noqa: PLC0415
+
+    if endpoint_refusal(endpoint):
+        return False
+    parts = urlsplit(endpoint)
+    try:
+        infos = socket.getaddrinfo(parts.hostname, parts.port or 443, 0, socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError):
+        return False
+    addresses = {info[4][0] for info in infos}
+    return bool(addresses) and not any(_is_blocked_address(a) for a in addresses)
+
+
 def _send_blocking(sub: dict[str, Any], data: str) -> tuple[bool, int | None]:
     """One send. Returns (ok, status). pywebpush does the RFC 8291 payload
     encryption and the VAPID signature; this wrapper exists to turn its
@@ -147,6 +194,9 @@ def _send_blocking(sub: dict[str, Any], data: str) -> tuple[bool, int | None]:
     from py_vapid import Vapid  # noqa: PLC0415
     from pywebpush import WebPushException, webpush  # noqa: PLC0415
 
+    if not _resolves_public(sub["endpoint"]):
+        logger.warning("push: refused to send to a non-public endpoint %.60s", sub["endpoint"])
+        return False, None
     k = keys()
     assert k is not None
     info = {

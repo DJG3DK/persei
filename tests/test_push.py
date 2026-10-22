@@ -248,7 +248,55 @@ def test_a_send_reports_the_status_rather_than_raising(keys_dir, monkeypatch):
 
     import pywebpush
     monkeypatch.setattr(pywebpush, "webpush", fake_webpush)
+    monkeypatch.setattr(push, "_resolves_public", lambda endpoint: True)
     ok, status = push._send_blocking(
         {"endpoint": "https://example.push/x", "p256dh": "p", "auth": "a"}, "{}")
     assert (ok, status) == (True, 200)
     assert sent["signer_type_ok"], "the PEM was passed through instead of a Vapid object"
+
+
+@pytest.mark.parametrize("endpoint", [
+    "http://fcm.googleapis.com/fcm/send/x", "https://127.0.0.1:4101/", "https://[::1]/x",
+    "https://10.0.0.5/x", "https://192.168.1.2/x", "https://169.254.169.254/latest", "https://localhost:8100/x",
+    "https://router.localhost/x", "not a url",
+])
+def test_a_push_endpoint_that_is_not_a_public_push_service_is_a_400(monkeypatch, endpoint):
+    """B29 (2026-10-22): any signed-in account could subscribe
+    http://127.0.0.1:<port>/ and the test send POSTed there, reporting
+    `sent: 1` on a 2xx."""
+    from fastapi.testclient import TestClient
+
+    import agent.server as srv
+    from agent.auth import User
+
+    me = User(id=7, email="u@b.co", role="user", allowed_repos=[], totp_enabled=True, must_change_password=False)
+    saved = []
+
+    async def save(*a, **k):
+        saved.append(a)
+
+    monkeypatch.setattr(srv.auth, "save_push_subscription", save)
+    monkeypatch.setitem(srv.app.dependency_overrides, srv.auth.require_full_auth, lambda: me)
+    r = TestClient(srv.app).post("/api/push/subscribe", json={"endpoint": endpoint, "p256dh": "p", "auth": "a"})
+    assert r.status_code == 400, r.text
+    assert saved == []
+
+
+def test_a_name_that_resolves_to_a_private_address_is_not_sent_to(keys_dir, monkeypatch):
+    push.public_key()
+    calls = []
+    import pywebpush
+    monkeypatch.setattr(pywebpush, "webpush", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(push.socket, "getaddrinfo",
+                        lambda host, port, *a: [(2, 1, 6, "", ("10.0.0.7", port))])
+    ok, status = push._send_blocking({"endpoint": "https://push.example.com/x", "p256dh": "p", "auth": "a"}, "{}")
+    assert (ok, status) == (False, None) and calls == []
+
+    monkeypatch.setattr(push.socket, "getaddrinfo",
+                        lambda host, port, *a: [(2, 1, 6, "", ("142.250.0.95", port))])
+    assert push._send_blocking({"endpoint": "https://push.example.com/x", "p256dh": "p", "auth": "a"}, "{}") == (True, 200)
+
+
+def test_a_real_push_service_endpoint_is_accepted():
+    assert push.endpoint_refusal("https://fcm.googleapis.com/fcm/send/abc:def") is None
+    assert push.endpoint_refusal("https://web.push.apple.com/QGx") is None

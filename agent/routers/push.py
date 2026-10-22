@@ -62,6 +62,11 @@ async def push_subscribe(req: PushSubscribeRequest, request: Request,
     an id in the body: a subscription is permission to receive that account's
     alerts, and accepting a user id from the client would let any signed-in
     account subscribe itself to another's feed."""
+    from agent import push  # noqa: PLC0415
+
+    refusal = push.endpoint_refusal(req.endpoint)
+    if refusal:
+        raise HTTPException(400, refusal)
     await auth.save_push_subscription(_pool(request), user.id, req.endpoint,
                                       req.p256dh, req.auth, req.label)
     return {"ok": True, "subscriptions": await auth.count_push_subscriptions(
