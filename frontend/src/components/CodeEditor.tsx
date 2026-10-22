@@ -6,6 +6,14 @@
  * 'self', and the common React wrapper's default is to pull Monaco from
  * jsdelivr at runtime. Workers are Vite `?worker` imports, emitted as
  * same-origin files, which that CSP already allows.
+ *
+ * Accepted risk: Monaco vendors DOMPurify 3.4.15 (esm/vs/base/browser/dompurify/)
+ * and never imports the npm package, so `npm audit` reports its advisories
+ * and no override can patch them -- the one added in 4fe4a86 upgraded only
+ * an unused copy and was dropped on 2026-10-22 (audit U25). They need
+ * SAFE_FOR_TEMPLATES, IN_PLACE or PARSER_MEDIA_TYPE, none of which Monaco
+ * passes. Upgrade Monaco once it vendors >= 3.4.17; CodeEditor.test.ts
+ * fails when the vendored version changes, so this note cannot go stale.
  */
 import { useEffect, useRef } from "react";
 import * as monaco from "monaco-editor";
