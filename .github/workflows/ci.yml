@@ -200,6 +200,12 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      # render.test.ts skips without dist/, so in `npm test` above it always
+      # did; here it runs against the build and a missing dist/ fails.
+      - name: The built page's render tests
+        run: npx vitest run src/render.test.ts
+        env:
+          SITE_REQUIRE_DIST: "1"
       - name: The page ships no JavaScript
         run: |
           if grep -q '<script[^>]*src=' dist/index.html; then

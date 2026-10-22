@@ -28,6 +28,16 @@ const built = existsSync(DIST_INDEX) ? readFileSync(DIST_INDEX, 'utf8') : null;
 // build output would fail for a reason that has nothing to do with the code.
 const withBuild = built ? describe : describe.skip;
 
+// ...which also meant these never ran in CI at all: `npm test` came before
+// `npm run build`, so all of them skipped on every push (2026-10-22, audit
+// T7). CI now runs this file again after the build with SITE_REQUIRE_DIST=1,
+// and there a missing dist/ is a failure, not a skip.
+describe('the build output', () => {
+  it.runIf(process.env.SITE_REQUIRE_DIST === '1')('exists when the build has run', () => {
+    expect(built, `${DIST_INDEX} is missing; run npm run build first`).not.toBeNull();
+  });
+});
+
 function bodyText(html: string): string {
   const marker = '<div id="root">';
   const body = html.slice(html.indexOf(marker) + marker.length);
