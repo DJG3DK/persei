@@ -104,9 +104,38 @@ async function runChecks(cfg, worktreePath) {
 // Only cfg.checks commands are compared (build/db/secrets are not re-run on
 // base). Results are cached in state.json per base sha, so a slow suite is
 // re-run on base once per base, not once per round.
+// What a failing check's output names: `[review-tests] test:x ... FAIL` lines
+// and the test files in its stack traces. Read from the BASE run's output as
+// well as the branch's, because "fails on base" is only an excuse for the
+// failures the base actually has (see applyBaseline).
+function failureMarkers(output) {
+  const text = String(output || '');
+  const markers = new Set();
+  for (const m of text.matchAll(/\b(test:[\w./-]+)\s*\.\.\.\s*FAIL/g)) markers.add(m[1]);
+  for (const m of text.matchAll(/(?:\/workspace\/)?((?:tests?|spec|__tests__)\/[\w./-]+\.\w+)(?::\d+)?/g)) markers.add(m[1]);
+  return [...markers];
+}
+
+// A baseline entry is `{ ok, markers }`. A bare boolean is a cache written
+// before 2026-10-22: it knows the base failed but not what failed, so
+// `markers` is null -- the check stays pre-existing as it was, and no finding
+// is excused by it.
+function _baseEntry(entry) {
+  if (entry && typeof entry === 'object') return { ok: entry.ok !== false, markers: Array.isArray(entry.markers) ? entry.markers : [] };
+  return { ok: entry !== false, markers: null };
+}
+
 function applyBaseline(checkResults, baselineForBase) {
   // Pure: marks each failed check whose baseline entry is a recorded FAILURE
   // as pre-existing. Returns the same objects, mutated, for the caller.
+  //
+  // "Red on base" is not "red for the same reason". 2026-10-22 audit, R15: a
+  // flake on main made the whole `test` check pre-existing, the branch's new
+  // failing test file then excused the model's blocking finding about it, and
+  // the commit came back READY. So the base's failure markers ride along as
+  // `baseMarkers` (reclassifyPreexisting excuses only those), and a branch
+  // that fails a named test the base does not (`test:x ... FAIL`) is not
+  // pre-existing at all.
   //
   // NEVER an infrastructure failure. A check whose command was missing failed
   // on the base for the same reason it failed on the branch -- the tool is
@@ -123,7 +152,18 @@ function applyBaseline(checkResults, baselineForBase) {
   // never fired, because it filters on `!c.preexisting`.
   for (const c of checkResults) {
     if (c.infrastructure) continue;
-    if (!c.ok && baselineForBase && baselineForBase[c.name] === false) c.preexisting = true;
+    if (c.ok || !baselineForBase || !Object.hasOwn(baselineForBase, c.name)) continue;
+    const base = _baseEntry(baselineForBase[c.name]);
+    if (base.ok) continue;
+    const baseFailing = new Set(base.markers || []);
+    const newFailing = base.markers === null ? []
+      : failureMarkers(c.output).filter((m) => m.startsWith('test:') && !baseFailing.has(m));
+    if (newFailing.length) {
+      c.output = `NOT PRE-EXISTING: the base commit fails this check too, but not ${newFailing.join(', ')}; those fail only on this branch.\n${c.output || ''}`;
+      continue;
+    }
+    c.preexisting = true;
+    c.baseMarkers = base.markers || [];
   }
   // When EVERY compared check fails on the base commit as well, the base is
   // not "a project whose suite is red": it is a review environment that
@@ -176,7 +216,9 @@ async function markPreexistingFailures(project, cfg, base, checkResults, prevBas
       // install for itself.
       ({ worktreePath: basePath } = await setupWorktree(project, cfg, base, base, { depsChangedOverride: branchDepsChanged }));
       const only = { ...cfg, checks: cfg.checks.filter((c) => missing.some((m) => m.name === c.name)) };
-      for (const r of await runChecks(only, basePath)) forBase[r.name] = r.ok;
+      // The output's markers, not just the boolean: what the base fails is
+      // what a branch failure may be excused by (applyBaseline).
+      for (const r of await runChecks(only, basePath)) forBase[r.name] = { ok: r.ok, markers: r.ok ? [] : failureMarkers(r.output) };
     } catch (err) {
       log(`[${project}] baseline check failed to run (treating failures as this change's): ${err.message}`);
     } finally {
@@ -349,6 +391,6 @@ async function runSecretScan(cfg, worktreePath) {
 }
 
 module.exports = {
-  classifyInfrastructureFailures, baselineKey, runChecks, applyBaseline, markPreexistingFailures,
+  classifyInfrastructureFailures, baselineKey, runChecks, applyBaseline, markPreexistingFailures, failureMarkers,
   runBuildCheck, runDatabaseCheck, runSecretScan,
 };

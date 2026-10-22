@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { AGENT_HOME, log, GIT_SAFE } = require('./exec');
+const { failureMarkers } = require('./checks');
 
 // Route through the model router instead of calling OpenRouter directly.
 // Before this the model was a hardcoded const and the request went straight to
@@ -500,26 +501,22 @@ function _isPreexistingSeverity(sev) {
   return typeof sev === 'string' && /^pre-?existing$/i.test(sev.trim());
 }
 
-// What a failing check's output names: `[review-tests] test:x ... FAIL` lines
-// and the test files in its stack traces. A blocking finding that points at
-// one of these, from a check that failed identically on the base commit, is a
-// finding about the base commit -- the model was told so and blocked anyway
-// (2026-10-17: three NEEDS_FIXES rounds and an escalation over a test that
-// failed on main too, while the agent truthfully said it could not reproduce
-// it in its own sandbox).
-function _failureMarkers(output) {
-  const text = String(output || '');
-  const markers = new Set();
-  for (const m of text.matchAll(/\b(test:[\w./-]+)\s*\.\.\.\s*FAIL/g)) markers.add(m[1]);
-  for (const m of text.matchAll(/(?:\/workspace\/)?((?:tests?|spec|__tests__)\/[\w./-]+\.\w+)(?::\d+)?/g)) markers.add(m[1]);
-  return [...markers];
-}
-
 // In node, not left to the model: a blocking finding about a pre-existing
-// failure becomes a "preexisting" note, so it cannot make NEEDS_FIXES. Returns
-// how many were moved, for the summary.
+// failure becomes a "preexisting" note, so it cannot make NEEDS_FIXES (2026-10-17:
+// three NEEDS_FIXES rounds and an escalation over a test that failed on main
+// too, while the agent truthfully said it could not reproduce it in its own
+// sandbox). Returns how many were moved, for the summary.
+//
+// A marker counts only when the BASE run's output names it as well
+// (applyBaseline's `baseMarkers`). Built from the branch's output alone, a new
+// test file failing only on the branch excused the finding about it whenever
+// main had any red at all, and an agent could print paths into a check's
+// output to excuse an unrelated finding (2026-10-22 audit, R15).
 function reclassifyPreexisting(review, checkResults) {
-  const markers = checkResults.filter((c) => !c.ok && c.preexisting).flatMap((c) => [c.name, ..._failureMarkers(c.output)]);
+  const markers = checkResults.filter((c) => !c.ok && c.preexisting).flatMap((c) => {
+    const base = new Set(c.baseMarkers || []);
+    return [c.name, ...failureMarkers(c.output).filter((m) => base.has(m))];
+  });
   const specific = markers.filter((m) => m.includes(':') || m.includes('/'));
   if (!specific.length) return 0;
   let moved = 0;
