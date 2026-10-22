@@ -12,6 +12,9 @@ import pytest
 from agent import github_repos
 from agent.tools import review_gate
 
+# The reviewed commit, and where the branch points unless a test moves it.
+TIP = "abc123def456" * 3 + "abcd"
+
 
 class _Resp:
     def __init__(self, status, payload):
@@ -85,6 +88,8 @@ def _ship(monkeypatch, *, project="demo", cfg=None, token="tok", remote="git@git
     monkeypatch.setattr(agent_config, "load_config", lambda: type("C", (), {"github_token": token})())
 
     async def fake_git(cmd, root, timeout=30, extra_env=None):
+        if cmd.startswith("rev-parse --verify"):
+            return {"ok": True, "output": TIP}
         if cmd.startswith("remote get-url"):
             return {"ok": bool(remote), "output": remote or ""}
         if cmd.startswith("push"):
@@ -100,7 +105,7 @@ def _ship(monkeypatch, *, project="demo", cfg=None, token="tok", remote="git@git
         return pr or {"number": "9", "url": "https://github.com/o/r/pull/9", "state": "open"}
 
     monkeypatch.setattr(github_repos, "open_pull_request", fake_pr)
-    return asyncio.run(review_gate.ship_as_pull_request(project, "agent/t1", "abc123def456", "Title"))
+    return asyncio.run(review_gate.ship_as_pull_request(project, "agent/t1", TIP, "Title"))
 
 
 def test_shipping_opens_the_pull_request_and_reports_its_url(monkeypatch):
@@ -152,6 +157,8 @@ def _ship_capturing_push(monkeypatch, origin, token="tok", push_raises=None):
     seen = {}
 
     async def fake_git(cmd, root, timeout=30, extra_env=None):
+        if cmd.startswith("rev-parse --verify"):
+            return {"ok": True, "output": TIP}
         if cmd.startswith("remote get-url"):
             return {"ok": True, "output": "git@github.com:o/r.git"}
         if cmd.startswith("config --local --get remote.origin.url"):
@@ -164,7 +171,7 @@ def _ship_capturing_push(monkeypatch, origin, token="tok", push_raises=None):
         return {"ok": True, "output": ""}
 
     monkeypatch.setattr(gitmod, "_git", fake_git)
-    r = asyncio.run(review_gate.ship_as_pull_request("demo", "agent/t1", "abc123", "T"))
+    r = asyncio.run(review_gate.ship_as_pull_request("demo", "agent/t1", TIP, "T"))
     return seen.get("cmd", ""), seen.get("env"), r
 
 
@@ -210,7 +217,7 @@ def test_an_ssh_origin_is_pushed_by_remote_name(monkeypatch):
     it."""
     cmd, env, _ = _ship_capturing_push(monkeypatch, "git@github.com:o/r.git")
     # Forced: the branch may have been pushed before and rebased since.
-    assert cmd.strip().endswith("origin +agent/t1:refs/heads/agent/t1")
+    assert cmd.strip().endswith(f"origin +{TIP}:refs/heads/agent/t1")
     assert "credential.helper" not in cmd
     assert env is None
 
@@ -226,6 +233,8 @@ def test_a_failed_push_does_not_echo_the_token(monkeypatch):
                         lambda: type("C", (), {"github_token": "s3cret"})())
 
     async def fake_git(cmd, root, timeout=30, extra_env=None):
+        if cmd.startswith("rev-parse --verify"):
+            return {"ok": True, "output": TIP}
         if cmd.startswith("remote get-url"):
             return {"ok": True, "output": "git@github.com:o/r.git"}
         if cmd.startswith("config --local"):
@@ -236,7 +245,7 @@ def test_a_failed_push_does_not_echo_the_token(monkeypatch):
         return {"ok": True, "output": ""}
 
     monkeypatch.setattr(gitmod, "_git", fake_git)
-    r = asyncio.run(review_gate.ship_as_pull_request("demo", "agent/t1", "abc", "T"))
+    r = asyncio.run(review_gate.ship_as_pull_request("demo", "agent/t1", TIP, "T"))
     assert r["ok"] is False
     assert "s3cret" not in r["error"]
     assert "***" in r["error"]
@@ -259,6 +268,8 @@ def test_a_projects_own_token_is_preferred_over_the_environment(monkeypatch):
     captured = {}
 
     async def fake_git(cmd, root, timeout=30, extra_env=None):
+        if cmd.startswith("rev-parse --verify"):
+            return {"ok": True, "output": TIP}
         if cmd.startswith("remote get-url"):
             return {"ok": True, "output": "git@github.com:o/r.git"}
         if cmd.startswith("config --local"):
@@ -272,7 +283,7 @@ def test_a_projects_own_token_is_preferred_over_the_environment(monkeypatch):
     monkeypatch.setattr(github_repos, "open_pull_request",
                         lambda *a, **k: _async({"number": "1", "url": "u", "state": "open"}))
 
-    asyncio.run(review_gate.ship_as_pull_request("demo", "agent/t1", "abc", "T"))
+    asyncio.run(review_gate.ship_as_pull_request("demo", "agent/t1", TIP, "T"))
     assert captured["push"] == "the-projects-own-token"
 
 
@@ -308,3 +319,38 @@ def test_a_push_mode_ship_still_says_merged_and_deployed():
     else:
         summary = "merged and deployed"
     assert summary == "merged and deployed"
+
+
+# --- what is pushed is what was reviewed ------------------------------------
+#
+# 2026-10-22 audit, R19: the push was `+{branch}:...`, so a commit made on the
+# branch after the review went out in the pull request unreviewed.
+
+def test_the_reviewed_commit_is_pushed_not_the_branch_name(monkeypatch):
+    cmd, _, r = _ship_capturing_push(monkeypatch, "git@github.com:o/r.git")
+    assert r["ok"] is True
+    assert f"+{TIP}:refs/heads/agent/t1" in cmd
+
+
+def test_a_branch_that_moved_since_the_review_is_not_pushed(monkeypatch):
+    import agent.config as agent_config
+    import agent.tools.git as gitmod
+
+    monkeypatch.setitem(agent_config.PROJECTS, "demo", {"live": "/tmp/live"})
+    monkeypatch.setattr(agent_config, "load_config", lambda: type("C", (), {"github_token": "tok"})())
+    pushed = []
+
+    async def fake_git(cmd, root, timeout=30, extra_env=None):
+        if cmd.startswith("rev-parse --verify"):
+            return {"ok": True, "output": "f00d" * 10}      # a commit nobody reviewed
+        if cmd.startswith("remote get-url"):
+            return {"ok": True, "output": "git@github.com:o/r.git"}
+        if _is_push(cmd):
+            pushed.append(cmd)
+        return {"ok": True, "output": ""}
+
+    monkeypatch.setattr(gitmod, "_git", fake_git)
+    r = asyncio.run(review_gate.ship_as_pull_request("demo", "agent/t1", TIP, "T"))
+    assert r["ok"] is False and r["reason"] == "diverged"
+    assert "not the reviewed" in r["error"]
+    assert pushed == []

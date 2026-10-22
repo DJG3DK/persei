@@ -68,7 +68,8 @@ async def test_a_branch_on_the_current_tip_ships_normally(project, monkeypatch):
     from agent import github_repos
     monkeypatch.setattr(github_repos, "open_pull_request", fake_pr)
 
-    out = await rg.ship_as_pull_request("demo", "agent/task-1", "deadbeef" * 5, "t")
+    tip = _run(["rev-parse", "agent/task-1"], project).stdout.strip()
+    out = await rg.ship_as_pull_request("demo", "agent/task-1", tip, "t")
     assert out["ok"] is True and out["shipped"] == "pull_request"
     assert "push" in pushed["cmd"]
 
@@ -137,6 +138,8 @@ async def test_an_unreadable_commit_count_does_not_block_the_ship(project, monke
             return {"ok": True, "output": "https://github.com/OWNER/REPO.git"}
         if " push " in f" {cmd} ":
             return {"ok": True, "output": ""}
+        if cmd.startswith("rev-parse --verify"):
+            return {"ok": True, "output": "deadbeef" * 5}
         return {"ok": True, "output": ""}      # including rev-list --count
 
     monkeypatch.setattr(git_mod, "_git", blank_git)

@@ -586,13 +586,29 @@ async def ship_as_pull_request(project: str, branch: str, sha: str, title: str) 
         return {"ok": False, "stage": "ship",
                 "error": f"{project} has no GitHub origin to open a pull request against"}
 
+    # Push the reviewed commit, not whatever the branch points at now. The
+    # merge path ships the exact reviewed tipSha (R6); this pushed the branch
+    # name and used `sha` only in the PR body, so a commit made on the branch
+    # after the review went out unreviewed (2026-10-22 audit, R19). A moved
+    # branch is answered like a moved base: `diverged`, and the self-heal
+    # reviews the new tip.
+    tip = await _git(f"rev-parse --verify {branch}^{{commit}}", live, timeout=15)
+    tip_sha = tip["output"].strip() if tip["ok"] else ""
+    if not tip_sha or not (tip_sha == sha or (len(sha) >= 7 and tip_sha.startswith(sha))):
+        return {
+            "ok": False, "stage": "ship", "reason": "diverged",
+            "error": f"{branch} is at {tip_sha[:12] or 'an unreadable commit'}, not the reviewed "
+                     f"{sha[:12]}, so it was not pushed. Reviewing the branch's current tip.",
+            "liveSha": (await _git(f"rev-parse {base}", live, timeout=15))["output"].strip(),
+        }
+
     # The push authenticates by what the remote is: see push_to_github.
     configured = await _git("config --local --get remote.origin.url", live, timeout=15)
     origin = configured["output"].strip() if configured["ok"] else ""
     # Forced: the branch may have been pushed before and rebased since (the
     # gate rebases onto the base before review), and a task branch is the
     # agent's own to move.
-    push = await push_to_github(live, origin, slug, f"+{branch}:refs/heads/{branch}", token, name=branch)
+    push = await push_to_github(live, origin, slug, f"+{tip_sha}:refs/heads/{branch}", token, name=branch)
     if not push["ok"]:
         return {"stage": "ship", **push}
 

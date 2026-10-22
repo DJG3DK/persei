@@ -94,6 +94,8 @@ async def test_the_ship_step_returns_the_hint_rather_than_the_git_error(monkeypa
     monkeypatch.setattr(github_settings, "token_for", lambda *a, **k: FINE)
 
     async def fake_git(cmd, cwd, timeout=None, extra_env=None):
+        if cmd.startswith("rev-parse --verify"):
+            return {"ok": True, "output": "deadbeef" * 5}
         if "remote get-url" in cmd or "config --local" in cmd:
             return {"ok": True, "output": "https://github.com/OWNER/REPO.git"}
         if " push " in f" {cmd} ":
