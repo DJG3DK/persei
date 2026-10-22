@@ -46,11 +46,11 @@ const DOCKER_TEXT = {
   },
   linux: {
     missing: { title: "Docker is not installed", button: "install", label: "Install Docker",
-      body: "Persei runs in containers. This installs Docker Engine (with Docker's own install script, or from your distribution's packages on Arch-based systems like CachyOS), starts its service, and lets your account use it. Your system asks for your password once, and Persei restarts itself when it is done." },
+      body: "Persei runs in containers. This installs Docker Engine (with Docker's own install script, or from your distribution's packages on Arch-based systems like CachyOS), starts its service, and lets your account use it (through the docker group, which is as good as root on this machine). Your system asks for your password once, and Persei restarts itself when it is done." },
     stopped: { title: "Docker is not running", button: "start", label: "Start Docker",
       body: "The Docker service is installed but stopped. Starting it asks for your password (or starts Docker Desktop, if that is what you use)." },
     denied: { title: "Your account cannot use Docker yet", button: "install", label: "Give my account access",
-      body: "Docker is running, but only members of the docker group may use it. This adds you (your system asks for your password once), and Persei restarts itself with access." },
+      body: "Docker is running, but only members of the docker group may use it. This adds you (your system asks for your password once), and Persei restarts itself with access. Membership is as good as root: any program you run can then use Docker to change anything on this machine. Rootless Docker avoids that, if you would rather set it up yourself." },
     "no-compose": { title: "This Docker has no compose command", body: "Install the compose plugin (the docker-compose-plugin package) and check again." },
   },
 };

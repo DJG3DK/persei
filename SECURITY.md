@@ -332,6 +332,12 @@ Treat an alert link like the alert: it is for the person it was sent to.
   key, and `git push` stays on the agent's blocked-command list.
 - **Budget ceilings are a safety control too.** `DEFAULT_BUDGET_USD` bounds a
   runaway loop's cost.
+- **On Linux, the docker group is root.** The desktop app adds your account
+  to it when Docker refuses you, and every program you run can then start a
+  container that mounts `/` and edit anything on the machine. The panel says
+  so before it asks. If that is too much, use
+  [rootless Docker](https://docs.docker.com/engine/security/rootless/) and
+  leave the group alone.
 
 ## Supported versions
 

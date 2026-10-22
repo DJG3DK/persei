@@ -287,3 +287,15 @@ def test_a_windows_app_update_stops_the_log_follow_before_the_plugin_exits():
     hook = body[body.index(".on_before_exit("):]
     assert hook.index("crate::stop_follow_on_exit(") < hook.index(".cleanup_before_exit()")
     assert body.index(".on_before_exit(") < body.index(".build()")
+
+
+def test_the_panel_says_the_docker_group_is_root_before_it_asks():
+    """D32, 2026-10-22: the panel offered to add the account to the docker
+    group without saying what that grants."""
+    js = (REPO / "app/src/main.js").read_text()
+    linux = js[js.index("  linux: {"):]
+    for state in ("missing", "denied"):
+        body = linux[linux.index(f"{state}: {{"):]
+        body = body[: body.index("},")]
+        assert "as good as root" in body, state
+    assert "the docker group is root" in (REPO / "SECURITY.md").read_text()
