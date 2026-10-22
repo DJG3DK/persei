@@ -31,6 +31,9 @@ url = "2"
 # what the updater itself verifies with.
 minisign-verify = "0.3"
 base64 = "0.23"
+# The hash of Docker's install script as it arrives, checked again by the
+# root shell that runs it (docker.rs linux_install_script).
+sha2 = "0.10"
 
 [dev-dependencies]
 # Already in the tree through tauri; the tests show what its ordering

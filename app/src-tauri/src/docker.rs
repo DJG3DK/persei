@@ -181,10 +181,22 @@ pub fn plain_account(name: &str) -> bool {
 /// install script (it adds Docker's package repository and its signing
 /// key, then installs the engine and the compose plugin from it), the
 /// service enabled and started, and this account given the socket.
+///
+/// The downloaded file sits where this account can write, and the prompt
+/// that follows makes it root (2026-10-22): anything running as this
+/// account could swap it in between. So root runs a copy in a directory of
+/// its own, after checking it against the hash taken of the bytes as they
+/// arrived.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub fn linux_install_script(script: &str, account: &str) -> String {
+pub fn linux_install_script(script: &str, sha256: &str, account: &str) -> String {
+    assert!(
+        sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+        "a sha256 in hex"
+    );
     format!(
-        "set -e; sh {}; systemctl enable --now docker; usermod -aG docker {}",
+        "set -e; d=$(mktemp -d); trap 'rm -rf \"$d\"' EXIT; cp {} \"$d/get-docker.sh\"; \
+         echo \"{sha256}  $d/get-docker.sh\" | sha256sum -c --quiet -; sh \"$d/get-docker.sh\"; \
+         systemctl enable --now docker; usermod -aG docker {}",
         sh_quote(script),
         sh_quote(account)
     )
@@ -380,9 +392,9 @@ pub async fn install(app: &AppHandle) -> Result<String, String> {
                 app,
                 "Downloading Docker's install script from get.docker.com...",
             );
-            download(app, DOCKER_SCRIPT_URL, &path).await?;
+            let sha256 = download(app, DOCKER_SCRIPT_URL, &path).await?;
             note(app, "Installing Docker Engine (your system asks for your password; this takes a few minutes)...");
-            let script = linux_install_script(&path.display().to_string(), &user);
+            let script = linux_install_script(&path.display().to_string(), &sha256, &user);
             let r = proc::capture("pkexec", &["sh", "-c", &script], None).await;
             let _ = std::fs::remove_file(&path);
             r.map_err(|e| pkexec_failure(&e, "install Docker"))?;
@@ -479,9 +491,12 @@ pub async fn install(_app: &AppHandle) -> Result<String, String> {
     Err("Install Docker Desktop yourself, then come back here.".into())
 }
 
+/// Says the sha256 of the bytes as they arrived, in hex.
 #[cfg(any(windows, target_os = "linux"))]
-async fn download(app: &AppHandle, url: &str, path: &std::path::Path) -> Result<(), String> {
+async fn download(app: &AppHandle, url: &str, path: &std::path::Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
     use tokio::io::AsyncWriteExt;
+    let mut hash = Sha256::new();
     let resp = reqwest::get(url)
         .await
         .map_err(|e| format!("download failed: {e}"))?;
@@ -498,6 +513,7 @@ async fn download(app: &AppHandle, url: &str, path: &std::path::Path) -> Result<
     use futures_util::StreamExt;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| format!("download failed: {e}"))?;
+        hash.update(&chunk);
         file.write_all(&chunk).await.map_err(|e| e.to_string())?;
         got += chunk.len() as u64;
         if let Some(pct) = (got * 100).checked_div(total).map(|p| p as u32) {
@@ -508,7 +524,7 @@ async fn download(app: &AppHandle, url: &str, path: &std::path::Path) -> Result<
         }
     }
     file.flush().await.map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 #[cfg(test)]
@@ -537,10 +553,35 @@ mod tests {
 
     #[test]
     fn the_linux_install_script_quotes_what_it_is_given() {
-        let s = linux_install_script("/home/o'brien/.local/share/x/get-docker.sh", "danny");
-        assert!(s.starts_with("set -e; sh '/home/o'\\''brien/.local/share/x/get-docker.sh';"));
+        let hex = "ab".repeat(32);
+        let s = linux_install_script("/home/o'brien/.local/share/x/get-docker.sh", &hex, "danny");
+        assert!(
+            s.contains("cp '/home/o'\\''brien/.local/share/x/get-docker.sh' \"$d/get-docker.sh\";")
+        );
         assert!(s.contains("systemctl enable --now docker"));
         assert!(s.ends_with("usermod -aG docker 'danny'"));
+    }
+
+    #[test]
+    fn root_runs_its_own_copy_of_the_docker_script_after_checking_its_hash() {
+        let hex = "0f".repeat(32);
+        let s = linux_install_script("/u/get-docker.sh", &hex, "danny");
+        let copy = s.find("cp '/u/get-docker.sh' \"$d/").unwrap();
+        let check = s
+            .find(&format!("{hex}  $d/get-docker.sh\" | sha256sum -c"))
+            .unwrap();
+        let run = s.find("sh \"$d/get-docker.sh\"").unwrap();
+        assert!(s.starts_with("set -e; d=$(mktemp -d);") && copy < check && check < run);
+        assert!(
+            !s.contains("sh '/u/"),
+            "never the file this account can write"
+        );
+        assert!(std::panic::catch_unwind(|| linux_install_script(
+            "/u/x",
+            "abc\"; reboot",
+            "danny"
+        ))
+        .is_err());
     }
 
     #[test]
