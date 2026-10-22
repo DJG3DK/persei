@@ -1110,21 +1110,49 @@ pub async fn check_app_update(app: &AppHandle) -> Result<AppUpdate, String> {
     }
 }
 
-/// Whether this copy of the app can replace itself. Tauri's updater
-/// installs an AppImage on Linux and nothing else; a copy installed from
-/// the .deb is the package manager's, and its update is the next .deb.
-/// `appimage` is the APPIMAGE variable the AppImage runtime sets.
+/// Whether this copy of the app can replace itself. On Linux that is the
+/// AppImage: the manifest's one Linux entry, linux-x86_64, is the AppImage.
+/// The plugin (2.13) would install a .deb with `pkexec dpkg -i`, but no
+/// .deb entry is published, and pkexec's password prompt is not for an
+/// unattended pass anyway: a copy installed from the .deb is the package
+/// manager's, and its update is the next .deb. `appimage` is the APPIMAGE
+/// variable the AppImage runtime sets.
 pub fn self_updating(linux: bool, appimage: Option<&str>) -> bool {
     !linux || appimage.is_some_and(|p| !p.is_empty())
+}
+
+fn self_updating_here() -> bool {
+    self_updating(
+        cfg!(target_os = "linux"),
+        std::env::var("APPIMAGE").ok().as_deref(),
+    )
+}
+
+/// What the automatic pass does about the app itself.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AutoApp {
+    Current,
+    /// Say a newer app is out; the panel's button opens its page.
+    Notify,
+    Install,
+}
+
+/// 2026-10-22: a .deb copy counted every newer release as installable, so
+/// two minutes after each start and every six hours after, the automatic
+/// pass opened the release page in a browser and logged a failure. Only a
+/// copy that replaces itself installs unasked; the others are told.
+pub fn auto_action(self_updating: bool, newer: bool) -> AutoApp {
+    match (newer, self_updating) {
+        (false, _) => AutoApp::Current,
+        (true, false) => AutoApp::Notify,
+        (true, true) => AutoApp::Install,
+    }
 }
 
 /// Download and install the newest app, then restart into it.
 pub async fn install_app_update(app: &AppHandle) -> Result<(), String> {
     let latest = latest_release(wants_prereleases(app)).await?;
-    if !self_updating(
-        cfg!(target_os = "linux"),
-        std::env::var("APPIMAGE").ok().as_deref(),
-    ) {
+    if !self_updating_here() {
         let page = format!("https://github.com/{REPO}/releases/tag/{}", latest.tag_name);
         let _ = tauri_plugin_opener::open_url(&page, None::<&str>);
         return Err(format!(
@@ -1184,8 +1212,16 @@ pub async fn auto_update_pass(app: &AppHandle, lock: &StackLock) -> Result<Strin
     // flight, and nobody at the window. 2026-09-29: it reinstalled itself
     // while the operator was typing to a running task, and took the window.
     let mine = check_app_update(app).await?;
-    if !mine.available {
-        return Ok("up to date".into());
+    match auto_action(self_updating_here(), mine.available) {
+        AutoApp::Current => return Ok("up to date".into()),
+        AutoApp::Notify => {
+            return Ok(format!(
+                "app {} is out; this copy came from the .deb package, so it updates by \
+                 installing the new one (Update app in the panel opens its page)",
+                mine.version
+            ))
+        }
+        AutoApp::Install => {}
     }
     if agent_state().await == Agent::Busy {
         return Ok(format!(
@@ -1642,6 +1678,14 @@ mod tests {
         assert!(self_updating(true, Some("/home/u/Tektonix.AppImage")));
         assert!(!self_updating(true, None), "a .deb install");
         assert!(!self_updating(true, Some("")));
+    }
+
+    #[test]
+    fn a_deb_copy_is_told_about_an_update_and_never_sent_to_a_browser() {
+        assert_eq!(auto_action(false, true), AutoApp::Notify);
+        assert_eq!(auto_action(true, true), AutoApp::Install);
+        assert_eq!(auto_action(false, false), AutoApp::Current);
+        assert_eq!(auto_action(true, false), AutoApp::Current);
     }
 
     #[test]
