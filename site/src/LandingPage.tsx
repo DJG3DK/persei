@@ -693,6 +693,7 @@ docker compose up -d`}</code></pre>
           use. Built and maintained by me, Danny,{" "}
           <a href={`mailto:${OWNER_EMAIL}`}>{OWNER_EMAIL}</a>.
         </p>
+        <a href="/privacy/">Privacy</a>
         <a href={TELEGRAM} target="_blank" rel="noopener noreferrer">
           <TelegramMark />
           Telegram
