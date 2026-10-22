@@ -3,8 +3,9 @@
 //
 //   node scripts/add_linux_to_updater_manifest.mjs <latest.json> <dir> <owner/repo> <tag>
 //
-// The Windows build writes latest.json (tauri-action); the Linux build only
-// builds, so the two jobs never race over the file (release.yml, publish).
+// The Windows job writes latest.json (write_windows_updater_manifest.mjs);
+// the Linux build only builds, so the two jobs never race over the file
+// (release.yml, publish).
 // This adds the entry Tauri's updater looks up on Linux: `linux-x86_64`,
 // and the bundle-specific `linux-x86_64-appimage` it tries first, both the
 // AppImage in <dir> with the signature from its .sig. Nothing else in the

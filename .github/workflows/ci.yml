@@ -450,7 +450,9 @@ jobs:
     # build does that.
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    container: ivangabriele/tauri:debian-bookworm-20
+    # By digest: a tag on Docker Hub can be pushed again, and this image
+    # compiles the app every push (I24, 2026-10-22).
+    container: ivangabriele/tauri:debian-bookworm-20@sha256:4a2739235436f40147686bd8dc920800e7ba54f92699d4d2d2f0e57730be411b
     defaults:
       run:
         working-directory: app/src-tauri

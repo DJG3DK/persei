@@ -212,9 +212,11 @@ def test_code_signing_happens_inside_the_build_and_is_verified():
     steps = wf["jobs"]["app-windows"]["steps"]
     names = [s.get("name") or s.get("uses", "") for s in steps]
     sign = names.index("Code signing, when configured")
-    build = next(i for i, n in enumerate(names) if n.startswith("tauri-apps/tauri-action"))
+    build = names.index("Build")
     verify = names.index("The installer is signed by the expected publisher")
-    assert sign < build < verify
+    updater = names.index("Sign the installer for the updater")
+    upload = names.index("Attach the installer and the update manifest to the draft")
+    assert sign < build < verify < updater < upload
     assert "signCommand" in steps[sign]["run"] and "trusted-signing-cli" in steps[sign]["run"]
     assert steps[verify]["if"] == "steps.codesign.outputs.enabled == 'true'"
     assert "Get-AuthenticodeSignature" in steps[verify]["run"]
@@ -260,9 +262,11 @@ def test_the_linux_app_is_built_signed_and_joins_the_release_before_it_goes_publ
     assert set(linux["needs"]) == {"check", "images"} and "published" in linux["if"]
     assert linux["environment"] == "release", "the updater key, behind the same reviewer"
     assert linux["permissions"] == {"contents": "read"}, "it writes nothing to the release itself"
-    build = next(s for s in linux["steps"] if s.get("name") == "Build")
-    assert build["run"] == "npx tauri build --bundles appimage,deb"
-    assert "TAURI_SIGNING_PRIVATE_KEY" in build["env"] and "TEKTONIX_RELEASE_TAG" in build["env"]
+    steps = [s.get("name", "") for s in linux["steps"]]
+    build = linux["steps"][steps.index("Build")]
+    assert build["run"].startswith("npx tauri build --bundles appimage,deb ")
+    assert "TEKTONIX_RELEASE_TAG" in build["env"]
+    assert steps.index("Build") < steps.index("Sign the AppImage for the updater") < steps.index("Collect the files")
     attach = next(s for s in publish["steps"] if s.get("name", "").startswith("Attach the Linux app"))
     assert "add_linux_to_updater_manifest.mjs" in attach["run"]
     assert attach["run"].index("gh release upload") < attach["run"].index("add_linux_to_updater_manifest")
@@ -299,3 +303,33 @@ def test_the_panel_says_the_docker_group_is_root_before_it_asks():
         body = body[: body.index("},")]
         assert "as good as root" in body, state
     assert "the docker group is root" in (REPO / "SECURITY.md").read_text()
+
+
+def test_the_updater_key_is_never_in_a_build_and_signing_tools_are_pinned():
+    """I24, 2026-10-22: the updater's minisign key was in the environment of
+    the Tauri build, and so of every tool it runs: an unpinned
+    trusted-signing-cli once per signed file on Windows, linuxdeploy
+    downloaded at build time on Linux. Any of them could sign an update
+    every installed copy accepts. The builds run without it; steps that
+    run only `tauri signer sign` sign the finished files."""
+    for path in (REPO / ".github/workflows").glob("*.yml"):
+        wf = yaml.safe_load(path.read_text())
+        for name, job in wf["jobs"].items():
+            for step in job.get("steps", []):
+                run, env = str(step.get("run", "")), step.get("env", {})
+                for line in re.findall(r"cargo install .*", run):
+                    assert re.search(r"--version \d+\.\d+\.\d+\b|--rev [0-9a-f]{40}\b", line), f"{path.name} {name}: {line}"
+                if "tauri build" in run or "tauri-action" in step.get("uses", ""):
+                    assert "TAURI_SIGNING_PRIVATE_KEY" not in env, f"{path.name} {name}"
+                    assert '"createUpdaterArtifacts":false' in run, "or the build demands the key"
+                if "TAURI_SIGNING_PRIVATE_KEY" in env:
+                    assert "tauri signer sign" in run, f"{path.name} {name}: {step.get('name')}"
+    wf = yaml.safe_load((REPO / ".github/workflows/release.yml").read_text())
+    for job in ("app-windows", "app-linux"):
+        signs = [s.get("name") for s in wf["jobs"][job]["steps"] if "TAURI_SIGNING_PRIVATE_KEY" in s.get("env", {})]
+        assert signs, f"{job} signs nothing for the updater"
+
+
+def test_ci_builds_the_app_in_a_container_pinned_by_digest():
+    wf = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text())
+    assert re.fullmatch(r"ivangabriele/tauri:[\w.-]+@sha256:[0-9a-f]{64}", wf["jobs"]["app"]["container"])

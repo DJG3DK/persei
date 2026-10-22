@@ -225,21 +225,25 @@ jobs:
           for v in "$SIGN_ENDPOINT" "$SIGN_ACCOUNT" "$SIGN_PROFILE"; do
             printf '%s' "$v" | grep -Eq '^[A-Za-z0-9:/._-]+$' || { echo "a signing variable holds unexpected characters" >&2; exit 1; }
           done
-          cargo install trusted-signing-cli --locked
+          # An exact version: --locked pins only its dependencies, and this
+          # runs once per signed file with the Azure secret in its
+          # environment (I24, 2026-10-22). Moving it is a deliberate commit.
+          cargo install trusted-signing-cli --version 0.11.0 --locked
           # shellcheck disable=SC2016 # a JavaScript template literal, expanded by node
           node -e 'const fs=require("fs");const f="src-tauri/tauri.conf.json";const j=JSON.parse(fs.readFileSync(f,"utf8"));j.bundle=j.bundle||{};j.bundle.windows=j.bundle.windows||{};j.bundle.windows.signCommand=`trusted-signing-cli -e ${process.argv[1]} -a ${process.argv[2]} -c ${process.argv[3]} -d Persei %1`;fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$SIGN_ENDPOINT" "$SIGN_ACCOUNT" "$SIGN_PROFILE"
           echo "enabled=true" >> "$GITHUB_OUTPUT"
-      # Builds the NSIS installer, signs the updater artifact with the key in
-      # the secrets, and attaches the installer, its .sig and latest.json to
-      # the GitHub release for this tag (creating the release if the tag has
-      # none yet). The app's own updater reads latest.json from this tag's
-      # own release (releases/download/<tag>/latest.json; stack.rs
-      # updater_endpoint), so a candidate can update to the next candidate.
-      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+      # Builds the NSIS installer, Authenticode-signed when configured. The
+      # updater's signing key is not here: until 2026-10-22 the build had it
+      # in its environment (tauri-action), and with it every tool the build
+      # runs, the signing CLI once per file among them. Whoever compromised
+      # one could sign an update every installed copy accepts (I24). So the
+      # build makes no updater signature (createUpdaterArtifacts false; in
+      # Tauri 2 the updater artifact is the installer itself) and the step
+      # after the publisher check signs the finished bytes.
+      - name: Build
+        shell: bash
+        working-directory: app
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Read by trusted-signing-cli when code signing is configured.
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -247,33 +251,69 @@ jobs:
           # Baked into the binary (stack.rs release_tag): the app pulls the
           # images of the release it came from, rc or not.
           TEKTONIX_RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        with:
-          projectPath: app
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: "Persei ${{ github.event.inputs.tag || github.ref_name }}"
-          releaseBody: "See CHANGELOG.md."
-          # A draft: this repository has immutable releases, and a published
-          # release accepts no assets. The publish job publishes it, once
-          # the Linux app is attached too.
-          releaseDraft: true
-          # A tag with a dash (v0.9.0-rc1) is a pre-release: an app that is
-          # not one itself, and has not asked for them, reads releases/latest
-          # and never sees it (stack.rs wants_prereleases).
-          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
-          includeUpdaterJson: true
-          updaterJsonPreferNsis: true
+        run: npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
       # A configured signing that produced an unsigned installer is a failed
-      # release, not a warning: the draft is never published.
+      # release, not a warning: nothing is uploaded and the draft is never
+      # published.
       - name: The installer is signed by the expected publisher
         if: steps.codesign.outputs.enabled == 'true'
         shell: pwsh
         working-directory: app/src-tauri/target/release/bundle/nsis
+        env:
+          PUBLISHER: ${{ vars.ARTIFACT_SIGNING_PUBLISHER }}
         run: |
           $exe = Get-ChildItem -Filter '*_x64-setup.exe' | Select-Object -First 1
           if (-not $exe) { throw "no installer was built" }
           $sig = Get-AuthenticodeSignature -FilePath $exe.FullName
           Write-Host "$($exe.Name): $($sig.Status) -- $($sig.SignerCertificate.Subject)"
           if ($sig.Status -ne 'Valid') { throw "the installer is not validly signed: $($sig.StatusMessage)" }
+          # Valid says a trusted chain signed it, not whose. The name is the
+          # one verify-published checks from outside.
+          if ($env:PUBLISHER) {
+            $cn = $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+            if ($cn -ne $env:PUBLISHER) { throw "signed by '$cn', expected '$env:PUBLISHER'" }
+          } else {
+            Write-Host "::warning::ARTIFACT_SIGNING_PUBLISHER is not set; the signer's name is not checked"
+          }
+      # The updater signature, over the installer's final bytes, in a step
+      # that runs nothing but the CLI pinned by app/package-lock.json.
+      - name: Sign the installer for the updater
+        shell: bash
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -- src-tauri/target/release/bundle/nsis/*_x64-setup.exe
+          [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "expected one installer, found: $*" >&2; exit 1; }
+          npx tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$1"
+          test -s "$1.sig"
+      # The draft release for this tag (made here unless a re-run finds it),
+      # with the installer, its .sig and latest.json, as tauri-action made it.
+      # A draft: this repository has immutable releases, and a published
+      # release accepts no assets; the publish job publishes it once the
+      # Linux app is attached too. A tag with a dash (v0.9.0-rc1) is a
+      # pre-release: an app that is not one itself, and has not asked for
+      # them, reads releases/latest and never sees it (stack.rs
+      # wants_prereleases). The app's own updater reads latest.json from
+      # this tag's own release (releases/download/<tag>/latest.json;
+      # stack.rs updater_endpoint), so a candidate can update to the next.
+      - name: Attach the installer and the update manifest to the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          nsis=app/src-tauri/target/release/bundle/nsis
+          node scripts/write_windows_updater_manifest.mjs latest.json "$nsis" "$GITHUB_REPOSITORY" "$TAG"
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            pre=""
+            case "$TAG" in *-*) pre="--prerelease" ;; esac
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft $pre \
+              --title "Persei $TAG" --notes "See CHANGELOG.md."
+          fi
+          gh release upload "$TAG" "$nsis"/*_x64-setup.exe "$nsis"/*_x64-setup.exe.sig latest.json \
+            --clobber --repo "$GITHUB_REPOSITORY"
       # The image manifest: the digest each image was pushed as, signed with
       # the same key as the installer, on the same release. The app verifies
       # it with its embedded public key before pulling (update.rs
@@ -323,7 +363,8 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [check, images]
     if: needs.check.outputs.published != 'true'
-    # The updater key signs the AppImage; same environment, same reviewer.
+    # The updater key signs the AppImage, in a step after the build; same
+    # environment, same reviewer.
     environment: release
     permissions:
       contents: read
@@ -358,13 +399,25 @@ jobs:
           node -e 'const fs=require("fs");for (const f of ["src-tauri/tauri.conf.json","package.json"]){const j=JSON.parse(fs.readFileSync(f,"utf8"));j.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n")}' "$v"
           sed -i "0,/^version = \".*\"/s//version = \"$v\"/" src-tauri/Cargo.toml
           echo "app version $v"
+      # Without the updater key: the AppImage bundler downloads and runs
+      # linuxdeploy and its plugins here, unpinned (I24, 2026-10-22). As on
+      # Windows, the build makes no updater signature and the next step
+      # signs the finished AppImage.
       - name: Build
+        working-directory: app
+        env:
+          TEKTONIX_RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: npx tauri build --bundles appimage,deb --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - name: Sign the AppImage for the updater
         working-directory: app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TEKTONIX_RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: npx tauri build --bundles appimage,deb
+        run: |
+          set -- src-tauri/target/release/bundle/appimage/*.AppImage
+          [ "$#" -eq 1 ] && [ -f "$1" ] || { echo "expected one AppImage, found: $*" >&2; exit 1; }
+          npx tauri signer sign -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$1"
+          test -s "$1.sig"
       - name: Collect the files
         run: |
           mkdir linux-app
