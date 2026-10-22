@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Request
 import json
 import logging
 
-from agent import auth, benchmarks, metrics, paths
+from agent import auth, benchmarks, metrics, paths, store_paging
 from agent.auth import User, require_full_auth
 from agent.config import PROJECTS
 from agent.graph import read_with_retry
@@ -50,16 +50,19 @@ async def get_analytics(request: Request, user: User = Depends(require_full_auth
     tasks: list[dict] = []
     episodes: list[dict] = []
     planning_sessions: list[dict] = []
+    # Every row, not `asearch(limit=200)`: totals covered the newest 200
+    # tasks, episodes and sessions per project, and a busy project's spend
+    # and outcomes quietly stopped growing (audit B38, 2026-10-22).
     for repo in PROJECTS:
-        results = await read_with_retry(lambda repo=repo: store.asearch(("tasks", repo), limit=200))
+        results = await read_with_retry(lambda repo=repo: store_paging.all_items(store, ("tasks", repo)))
         for item in results:
             tasks.append({**item.value, "repo": repo})
         try:
-            for item in await read_with_retry(lambda repo=repo: store.asearch(("planning", repo), limit=200)):
+            for item in await read_with_retry(lambda repo=repo: store_paging.all_items(store, ("planning", repo))):
                 planning_sessions.append(item.value or {})
         except Exception:  # noqa: BLE001 -- the page still answers without the planning bucket
             logger.warning("analytics: could not read planning sessions for %s", repo)
-        ep_results = await read_with_retry(lambda repo=repo: store.asearch(("episodes", repo), limit=200))
+        ep_results = await read_with_retry(lambda repo=repo: store_paging.all_items(store, ("episodes", repo)))
         for item in ep_results:
             value = item.value
             # Episodes are stored as backend file entries ({"content": json-str})

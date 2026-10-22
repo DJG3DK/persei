@@ -11,8 +11,9 @@ from agent.classify import TaskClassification
 
 
 class _Item:
-    def __init__(self, value):
+    def __init__(self, value, key=None):
         self.value = value
+        self.key = key
 
 
 class _Store:
@@ -27,7 +28,7 @@ class _Store:
         self.records[(tuple(ns), key)] = dict(value)
 
     async def asearch(self, ns, limit=100):
-        return [_Item(dict(v)) for (n, _k), v in self.records.items() if n == tuple(ns)]
+        return [_Item(dict(v), k) for (n, k), v in self.records.items() if n == tuple(ns)]
 
 
 def _app(store):
@@ -179,3 +180,29 @@ def test_the_three_totals_on_the_analytics_page_agree(monkeypatch):
     made = datetime.fromtimestamp(made_ts, tz=UTC).strftime("%Y-%m-%d")
     if touched != made:
         assert round(days[touched]["cost"], 6) == 0.8, "a stranded plan lands on the day it was last touched"
+
+
+
+def test_analytics_counts_every_task_not_the_newest_200(monkeypatch):
+    """B38 (2026-10-22): each project's tasks were read with
+    asearch(limit=200), so the 201st and later were left out of every total."""
+    import agent.server as srv
+    from agent.auth import User
+    from agent.routers import analytics as an
+
+    class _Paged(_Store):
+        async def asearch(self, ns, limit=100, offset=0):
+            rows = [_Item(dict(v), k) for (n, k), v in self.records.items() if n == tuple(ns)]
+            return rows[offset:offset + min(limit, 200)]
+
+    store = _Paged({(("tasks", "proj"), f"t{n}"): {"task_id": f"t{n}", "repo": "proj", "goal": "g",
+                                                   "category": "feature", "cost_so_far": 1.0, "budget_usd": 5,
+                                                   "status": "done", "created_at": 1_790_000_000 + n}
+                    for n in range(201)})
+    monkeypatch.setattr(an, "PROJECTS", {"proj": {}})
+    monkeypatch.setattr(srv.app.state, "store", store, raising=False)
+    me = User(id=1, email="a@b.co", role="admin", allowed_repos=None, totp_enabled=True, must_change_password=False)
+    monkeypatch.setitem(srv.app.dependency_overrides, srv.auth.require_full_auth, lambda: me)
+    body = TestClient(srv.app).get("/api/analytics").json()
+    assert body["total_tasks"] == 201
+    assert round(body["total_cost"], 6) == 201.0
