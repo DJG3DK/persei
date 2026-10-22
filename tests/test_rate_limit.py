@@ -123,9 +123,9 @@ def test_a_successful_2fa_clears_the_verify_window(monkeypatch):
     monkeypatch.setattr(srv.app.state, "auth_pool", object(), raising=False)
 
     prior = _req({"x-real-ip": "203.0.113.7"})
-    rl.check_rate_limit(prior, "verify-2fa")
-    rl.check_rate_limit(prior, "verify-2fa")
-    assert ("203.0.113.7", "verify-2fa") in rl._attempts
+    rl.check_rate_limit(prior, "verify-2fa", account=1)
+    rl.check_rate_limit(prior, "verify-2fa", account=1)
+    assert ("203.0.113.7", "verify-2fa", "1") in rl._attempts
 
     res = TestClient(srv.app, client=("127.0.0.1", 50000)).post(
         "/api/auth/2fa/verify",
@@ -133,8 +133,8 @@ def test_a_successful_2fa_clears_the_verify_window(monkeypatch):
         headers={"X-Real-IP": "203.0.113.7"},
     )
     assert res.status_code == 200, res.text
-    assert ("203.0.113.7", "verify-2fa") not in rl._attempts
-    assert ("203.0.113.7", "verify-2fa") not in rl._locked_until
+    assert ("203.0.113.7", "verify-2fa", "1") not in rl._attempts
+    assert ("203.0.113.7", "verify-2fa", "1") not in rl._locked_until
 
 
 def test_an_internal_failure_lets_the_request_through_and_says_so(monkeypatch, caplog):
@@ -193,7 +193,7 @@ def test_the_password_recheck_on_an_authenticated_route_is_rate_limited(monkeypa
         assert client.post(path, json=body, headers=headers).status_code == wrong_status
     res = client.post(path, json=body, headers=headers)
     assert res.status_code == 429, res.text
-    assert ("203.0.113.9", "password-recheck") in rl._locked_until
+    assert ("203.0.113.9", "password-recheck", "7") in rl._locked_until
 
     rl._locked_until.clear()
     rl._attempts.clear()
@@ -201,4 +201,70 @@ def test_the_password_recheck_on_an_authenticated_route_is_rate_limited(monkeypa
         client.post(path, json=body, headers=headers)
     ok = client.post(path, json={**body, "current_password": "right", "password": "right"}, headers=headers)
     assert ok.status_code == 200, ok.text
-    assert ("203.0.113.9", "password-recheck") not in rl._attempts, "a good password clears the window"
+    assert ("203.0.113.9", "password-recheck", "7") not in rl._attempts, "a good password clears the window"
+
+
+def _login_client(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import agent.server as srv
+
+    rows = {
+        "victim@b.co": {"id": 1, "email": "victim@b.co", "password_hash": "victim-pw"},
+        "me@b.co": {"id": 2, "email": "me@b.co", "password_hash": "my-pw"},
+    }
+    for row in rows.values():
+        row.update({"role": "user", "allowed_repos": [], "totp_enabled": False,
+                    "must_change_password": False, "auto_approve_commands": False,
+                    "require_merge_review": True})
+
+    async def by_email(pool, email):
+        return rows.get(email)
+
+    async def session(pool, uid):
+        return "sess"
+
+    monkeypatch.setattr(srv.auth, "get_user_by_email", by_email)
+    monkeypatch.setattr(srv.auth, "verify_password", lambda pw, h: pw == h)
+    monkeypatch.setattr(srv.auth, "create_session", session)
+    monkeypatch.setattr(srv.app.state, "auth_pool", object(), raising=False)
+    return TestClient(srv.app, client=("127.0.0.1", 50000))
+
+
+def test_another_account_s_good_login_does_not_reset_the_victim_s_window(monkeypatch):
+    """B25 (2026-10-22): four wrong passwords for the victim, one correct
+    login as yourself, repeat. Clearing the whole IP's window on that login
+    allowed 30 guesses with no 429."""
+    client = _login_client(monkeypatch)
+    headers = {"X-Real-IP": "203.0.113.20"}
+
+    def guess():
+        return client.post("/api/auth/login", json={"email": "victim@b.co", "password": "guess"},
+                           headers=headers).status_code
+
+    for _ in range(4):
+        assert guess() == 401
+    assert client.post("/api/auth/login", json={"email": "Me@b.co ", "password": "my-pw"},
+                       headers=headers).status_code == 200
+    assert guess() == 401
+    assert guess() == 429, "the sixth guess at the victim must be refused"
+
+
+def test_one_ip_cannot_spray_every_account_it_can_name(monkeypatch):
+    client = _login_client(monkeypatch)
+    headers = {"X-Real-IP": "203.0.113.21"}
+    codes = [client.post("/api/auth/login", json={"email": f"u{i}@b.co", "password": "x"},
+                         headers=headers).status_code for i in range(rl._LIMITS["login"][0] * rl._IP_WIDE_FACTOR + 1)]
+    assert codes[-1] == 429 and set(codes[:-1]) == {401}
+
+
+def test_a_good_login_still_clears_the_account_s_own_misses(monkeypatch):
+    client = _login_client(monkeypatch)
+    headers = {"X-Real-IP": "203.0.113.22"}
+    for _ in range(4):
+        client.post("/api/auth/login", json={"email": "me@b.co", "password": "typo"}, headers=headers)
+    assert client.post("/api/auth/login", json={"email": "me@b.co", "password": "my-pw"},
+                       headers=headers).status_code == 200
+    for _ in range(4):
+        assert client.post("/api/auth/login", json={"email": "me@b.co", "password": "typo"},
+                           headers=headers).status_code == 401

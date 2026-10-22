@@ -9,6 +9,8 @@ same way.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
@@ -39,9 +41,33 @@ class RenameRequest(BaseModel):
     name: str = Field(max_length=200)
 
 
+_LOOPBACK_BINDS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _local_console(request: Request) -> str | None:
+    """The localhost:port this console answers on, if this request came to
+    it there -- decided on the server's side, never from the Origin header.
+
+    The Host header names it, and a browser cannot forge Host, which is what
+    a hostile page on another localhost port would need to relay through
+    the victim's browser. A scripted client can, so Host is believed only
+    when its port is the socket's own, or when the port is published on
+    loopback alone (the compose bundle maps AGENT_PORT to 8100 inside the
+    container), where nothing remote can send it."""
+    host = (request.headers.get("host") or "").strip().lower()
+    name, _, port = host.rpartition(":")
+    if name != "localhost" or not port.isdigit():
+        return None
+    server = request.scope.get("server") or (None, None)
+    bind = os.environ.get("BIND_ADDRESS", "").strip().strip("[]").lower()
+    if (server[1] is not None and int(port) == int(server[1])) or bind in _LOOPBACK_BINDS:
+        return host
+    return None
+
+
 def _rp(request: Request) -> passkeys.RelyingParty:
     try:
-        return passkeys.relying_party(request.headers.get("origin"))
+        return passkeys.relying_party(request.headers.get("origin"), local_console=_local_console(request))
     except passkeys.PasskeyError as e:
         raise HTTPException(400, str(e)) from e
 
@@ -53,11 +79,11 @@ async def list_passkeys(request: Request, user: User = Depends(require_full_auth
 
 @router.post("/api/auth/passkeys/register/options")
 async def register_options(request: Request, req: RegisterOptionsRequest, user: User = Depends(require_full_auth)):
-    rate_limit.check_rate_limit(request, "password-recheck")
+    rate_limit.check_rate_limit(request, "password-recheck", account=user.id)
     row = await auth.get_user_by_id(request.app.state.auth_pool, user.id)
     if not req.password or not auth.verify_password(req.password, row["password_hash"]):
         raise HTTPException(403, "current password required to add a passkey")
-    rate_limit.clear_rate_limit(request, "password-recheck")
+    rate_limit.clear_rate_limit(request, "password-recheck", account=user.id)
     try:
         return await passkeys.registration_options(request.app.state.auth_pool, _rp(request), user.id, user.email)
     except passkeys.PasskeyError as e:
@@ -111,7 +137,9 @@ async def login_verify(request: Request, req: LoginVerifyRequest, response: Resp
         user_id = await passkeys.login(pool, _rp(request), req.challenge_id, req.credential)
     except passkeys.PasskeyError as e:
         raise HTTPException(401, str(e)) from e
-    rate_limit.clear_rate_limit(request, "passkey-login")
+    # Not cleared on success: until it verifies, an assertion names no
+    # account, so the window is the IP's, and a good passkey of one's own
+    # would reset it for everyone else's (B25).
     token = await auth.create_session(pool, user_id)
     _set_session_cookie(response, token, request)
     row = await auth.get_user_by_id(pool, user_id)

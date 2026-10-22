@@ -3,6 +3,14 @@
 No new dependency and no external store: a single-process FastAPI app with one
 uvicorn worker (how this deploys) can hold attempt counters in a dict. A sliding
 window per (client-ip, action) with a lockout once the threshold is exceeded.
+
+Where a caller names the account a guess is against (login, the second
+factor, the password re-check), the window is per (client-ip, action,
+account) instead, plus a looser one for the IP across every account. A
+success clears only that account's window. Clearing the whole IP's window
+let one account holder reset the limit on another's password: four guesses
+at the victim, one good login as yourself, repeat -- 30 guesses with no 429
+(audit B25, 2026-10-22).
 Deliberately fails OPEN on its own errors -- a bug here must never lock every
 user out of their own dashboard -- but that is the only case it permits through,
 and it says so in the log every time (a limiter that silently stops limiting is
@@ -22,7 +30,8 @@ $proxy_add_x_forwarded_for, which APPENDS the real peer, so the client-supplied
 first hop is attacker-controlled and rotating it defeated the limiter entirely.
 Falls back to the LAST hop of XFF (the one our own proxy appended) and finally
 the socket peer. Not perfect against a botnet, but it turns the measured
-"25 password guesses in a few seconds, all processed" into "5 then locked".
+"25 password guesses in a few seconds, all processed" into five a minute per
+account, then a five-minute lock.
 
 Both headers are read only when the socket peer is a trusted proxy
 (AGENT_TRUSTED_PROXIES, loopback by default). From anyone else they are the
@@ -63,9 +72,17 @@ _LIMITS = {
     "passkey-login": (10, 60, 300),
 }
 
-# (ip, action) -> list[timestamp]  and  (ip, action) -> locked_until
-_attempts: dict[tuple[str, str], list[float]] = defaultdict(list)
-_locked_until: dict[tuple[str, str], float] = {}
+# An action counted per account also has an IP-wide window, this many times
+# the per-account limit and never cleared by a success: without it, one IP
+# could try five passwords a minute against every account it can name.
+_IP_WIDE_FACTOR = 4
+_ANY_ACCOUNT = "*"
+
+# (ip, action, account) -> list[timestamp]  and  -> locked_until. The account
+# is "" for an action counted per IP alone, and _ANY_ACCOUNT for the IP-wide
+# window of one counted per account.
+_attempts: dict[tuple[str, str, str], list[float]] = defaultdict(list)
+_locked_until: dict[tuple[str, str, str], float] = {}
 
 
 # Peers whose X-Real-IP / X-Forwarded-For are believed. Loopback by default:
@@ -149,31 +166,45 @@ def _maybe_evict(now: float) -> None:
             _locked_until.pop(key, None)
 
 
-def check_rate_limit(request: Request, action: str) -> None:
-    """Raise 429 if this (ip, action) is over its limit or locked out. Call at
-    the TOP of the endpoint, before any expensive work."""
+def _account_key(account: str | int | None) -> str:
+    if account is None:
+        return ""
+    return str(account).strip().lower() or "?"
+
+
+def _hit(key: tuple[str, str, str], max_attempts: int, window: int, lockout: int, now: float) -> None:
+    locked = _locked_until.get(key)
+    if locked and now < locked:
+        raise HTTPException(429, f"too many attempts; try again in {int(locked - now)}s")
+
+    recent = [t for t in _attempts[key] if now - t < window]
+    if len(recent) >= max_attempts:
+        _locked_until[key] = now + lockout
+        _attempts[key] = []
+        raise HTTPException(429, f"too many attempts; locked for {lockout}s")
+
+    recent.append(now)
+    _attempts[key] = recent
+
+
+def check_rate_limit(request: Request, action: str, account: str | int | None = None) -> None:
+    """Raise 429 if this (ip, action) -- or (ip, action, account) when the
+    account is named -- is over its limit or locked out. Call at the TOP of
+    the endpoint, before any expensive work."""
     try:
         limit = _LIMITS.get(action)
         if not limit:
             return
         max_attempts, window, lockout = limit
         ip = client_ip(request)
-        key = (ip, action)
         now = time.time()
         _maybe_evict(now)
 
-        locked = _locked_until.get(key)
-        if locked and now < locked:
-            raise HTTPException(429, f"too many attempts; try again in {int(locked - now)}s")
-
-        recent = [t for t in _attempts[key] if now - t < window]
-        if len(recent) >= max_attempts:
-            _locked_until[key] = now + lockout
-            _attempts[key] = []
-            raise HTTPException(429, f"too many attempts; locked for {lockout}s")
-
-        recent.append(now)
-        _attempts[key] = recent
+        if account is None:
+            _hit((ip, action, ""), max_attempts, window, lockout, now)
+            return
+        _hit((ip, action, _ANY_ACCOUNT), max_attempts * _IP_WIDE_FACTOR, window, lockout, now)
+        _hit((ip, action, _account_key(account)), max_attempts, window, lockout, now)
     except HTTPException:
         raise
     except Exception:  # noqa: BLE001 -- fail OPEN on an internal limiter bug
@@ -181,13 +212,22 @@ def check_rate_limit(request: Request, action: str) -> None:
         return
 
 
-def clear_rate_limit(request: Request, action: str) -> None:
+def clear_rate_limit(request: Request, action: str, account: str | int | None = None) -> None:
     """Call on a SUCCESSFUL auth so a legitimate user's own earlier fat-finger
-    attempts don't count toward a later lockout."""
+    attempts don't count toward a later lockout. Only that account's window:
+    the IP-wide one is never cleared, and an action counted per IP alone
+    should not call this at all (a success there proves nothing about the
+    other attempts from the same address)."""
     try:
-        key = (client_ip(request), action)
+        key = (client_ip(request), action, _account_key(account))
         _attempts.pop(key, None)
         _locked_until.pop(key, None)
     except Exception:  # noqa: BLE001
         logger.exception("rate limiter could not clear %r", action)
         return
+
+
+def reset_rate_limits() -> None:
+    """Forget every window and lock. For tests; a restart does the same."""
+    _attempts.clear()
+    _locked_until.clear()

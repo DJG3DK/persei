@@ -176,8 +176,11 @@ def _set_session_cookie(response: Response, token: str, request: Request | None 
 
 @router.post("/api/auth/login")
 async def login(req: LoginRequest, response: Response, request: Request):
-    rate_limit.check_rate_limit(request, "login")  # audit H-7
-    row = await auth.get_user_by_email(request.app.state.auth_pool, req.email.strip().lower())
+    email = req.email.strip().lower()
+    # Per account (B25): a good login as one account clears only its own
+    # misses, never the window on the account being guessed at.
+    rate_limit.check_rate_limit(request, "login", account=email)  # audit H-7
+    row = await auth.get_user_by_email(request.app.state.auth_pool, email)
     # audit M-1: run argon2 on both branches so an unknown email takes the same
     # time as a real one (no user-enumeration timing oracle).
     if not row:
@@ -185,7 +188,7 @@ async def login(req: LoginRequest, response: Response, request: Request):
         raise HTTPException(401, "invalid email or password")
     if not auth.verify_password(req.password, row["password_hash"]):
         raise HTTPException(401, "invalid email or password")
-    rate_limit.clear_rate_limit(request, "login")
+    rate_limit.clear_rate_limit(request, "login", account=email)
     if row["totp_enabled"]:
         # Returned in the body, held in page memory between the two login
         # steps: short-lived, single-use, and useless without the second
@@ -202,14 +205,18 @@ async def login(req: LoginRequest, response: Response, request: Request):
 
 @router.post("/api/auth/2fa/verify")
 async def verify_2fa(req: Verify2FARequest, response: Response, request: Request):
-    rate_limit.check_rate_limit(request, "verify-2fa")  # audit H-7
     pending = await auth.resolve_pending_2fa(request.app.state.auth_pool, req.temp_token)
+    # Counted per account once the token names one (B25); an expired or
+    # unknown token counts against the IP alone. The token is single-use, so
+    # being refused here costs a fresh password step, not a stuck login.
+    rate_limit.check_rate_limit(request, "verify-2fa",
+                                account=pending["user_id"] if pending else None)  # audit H-7
     if not pending:
         raise HTTPException(401, "2FA challenge expired -- log in again")
     ok = await auth.verify_totp_or_recovery(request.app.state.auth_pool, request.app.state.config, pending["user_id"], req.code.strip())
     if not ok:
         raise HTTPException(400, "invalid code")
-    rate_limit.clear_rate_limit(request, "verify-2fa")
+    rate_limit.clear_rate_limit(request, "verify-2fa", account=pending["user_id"])
     token = await auth.create_session(request.app.state.auth_pool, pending["user_id"])
     _set_session_cookie(response, token, request)
     row = await auth.get_user_by_id(request.app.state.auth_pool, pending["user_id"])
@@ -267,16 +274,16 @@ async def admin_check(user: User = Depends(auth.require_full_auth)):
 
 @router.post("/api/auth/change-password")
 async def change_password_endpoint(request: Request, req: ChangePasswordRequest, user: User = Depends(auth.get_current_user)):
-    rate_limit.check_rate_limit(request, "password-recheck")
+    rate_limit.check_rate_limit(request, "password-recheck", account=user.id)
     row = await auth.get_user_by_id(request.app.state.auth_pool, user.id)
     if not auth.verify_password(req.current_password, row["password_hash"]):
         raise HTTPException(401, "current password is incorrect")
-    rate_limit.clear_rate_limit(request, "password-recheck")
+    rate_limit.clear_rate_limit(request, "password-recheck", account=user.id)
     error = auth.validate_password_strength(req.new_password)
     if error:
         raise HTTPException(400, error)
-    await auth.change_password(request.app.state.auth_pool, user.id, req.new_password)
-    return {"ok": True}
+    removed = await auth.change_password(request.app.state.auth_pool, user.id, req.new_password)
+    return {"ok": True, "passkeys_removed": removed or 0}
 
 
 @router.post("/api/auth/2fa/setup")
@@ -288,11 +295,11 @@ async def setup_2fa(request: Request, req: Setup2FARequest = Setup2FARequest(), 
     # when 2FA is already enabled. First-time setup (2FA off) needs no password:
     # the session already proves who they are, and there is nothing to protect.
     if user.totp_enabled:
-        rate_limit.check_rate_limit(request, "password-recheck")
+        rate_limit.check_rate_limit(request, "password-recheck", account=user.id)
         row = await auth.get_user_by_id(request.app.state.auth_pool, user.id)
         if not req.password or not auth.verify_password(req.password, row["password_hash"]):
             raise HTTPException(403, "current password required to re-initialize 2FA")
-        rate_limit.clear_rate_limit(request, "password-recheck")
+        rate_limit.clear_rate_limit(request, "password-recheck", account=user.id)
     # Once-only by construction: every call mints a NEW secret (start_totp_setup
     # overwrites the pending one), so this response is the only time a given
     # secret leaves the server -- no GET returns it later. The raw secret rides
@@ -326,11 +333,11 @@ async def disable_2fa_endpoint(request: Request, req: Disable2FARequest,
     """
     if user.role == "admin":
         raise HTTPException(403, "2FA cannot be disabled on the admin account")
-    rate_limit.check_rate_limit(request, "password-recheck")
+    rate_limit.check_rate_limit(request, "password-recheck", account=user.id)
     row = await auth.get_user_by_id(request.app.state.auth_pool, user.id)
     if not req.password or not auth.verify_password(req.password, row["password_hash"]):
         raise HTTPException(403, "current password required to disable 2FA")
-    rate_limit.clear_rate_limit(request, "password-recheck")
+    rate_limit.clear_rate_limit(request, "password-recheck", account=user.id)
     await auth.disable_totp(request.app.state.auth_pool, user.id)
     return {"ok": True}
 

@@ -300,11 +300,23 @@ Treat an alert link like the alert: it is for the person it was sent to.
   (`BIND_ADDRESS`), and no account beyond the first may be licensed
   (`TEKTONIX_FEATURES=multi-user`). Change either and the full sign-in is
   back for everyone.
+- **A passkey replaces password and code, admins included.** A passkey
+  sign-in requires the device's own unlock, so it stands in for both factors.
+  It answers only on the console's own address: `WEBAUTHN_ORIGINS` when set,
+  otherwise the host the passkey was made on (and on `localhost`, the port
+  the console answers on). Naming a parent domain in `WEBAUTHN_RP_ID`
+  requires `WEBAUTHN_ORIGINS` too; without it, a page on a sibling subdomain
+  could use the same passkeys. A password change or reset removes every
+  passkey on the account.
 - **CSRF protection is the session cookie's `SameSite=strict`.** There are no
   CSRF tokens, because a strict cookie is never sent on a request another site
   starts. Loosening it — for an embed, an OAuth return, a subdomain — makes
   tokens or a `Sec-Fetch-Site` check on every mutating route required in the
   same change.
+- **Login rate limits are counted per account.** Five misses a minute on one
+  account from one address locks that account's sign-in from there for five
+  minutes; a success clears only its own account's misses. One address also
+  has a looser limit across every account.
 - **Login rate limits live in the process's memory.** They reset on restart,
   and would multiply by the worker count if the API ran more than one
   (`agent/rate_limit.py` says what raising that requires). If the limiter

@@ -4,15 +4,23 @@ A passkey is a second way in beside email + password + authenticator code,
 not a replacement for it: the code stays as the backup the operator asked
 for (2026-10-01). A passkey sign-in requires user verification -- the
 device's own fingerprint, face or PIN -- so on its own it carries both
-factors, and it is bound to the site it was made on, so it cannot be phished.
+factors, and replaces password plus authenticator code for any account,
+admins included. It is bound to its relying-party id, so a page on another
+site cannot use it; a page on a sibling of the console under that id can,
+which is why the expected origin is the console's own and not whatever the
+request says.
 
 The relying-party id is the host the browser is on (agent.example.com, or
 localhost for the desktop app), unless WEBAUTHN_RP_ID names a parent domain
-to share passkeys across subdomains. The expected origin comes from the
-request's Origin header, checked against that id; an attacker can forge the
-header on a scripted request, but not the authenticator's signature over the
-origin the browser really saw, and a credential only answers for the rp id
-it was registered under, which is stored with it and checked again here.
+to share passkeys across subdomains. The expected origin is the console's
+own address: WEBAUTHN_ORIGINS when set; otherwise the page's host must be
+the rp id itself, and on localhost the port must be the one the console
+answers on. Until 2026-10-22 it was the request's Origin header, checked
+only against the rp id: a hostile page on chat.example.com (rp id
+example.com) or on localhost:5173 could run the ceremony and relay the
+assertion with a forged Origin, and was signed in without password or code
+(audit B26). A credential also only answers for the rp id it was
+registered under, which is stored with it and checked again here.
 """
 
 from __future__ import annotations
@@ -88,10 +96,25 @@ class RelyingParty:
 _LOCAL_HOSTS = {"localhost"}
 
 
-def relying_party(origin_header: str | None) -> RelyingParty:
-    """The rp id and expected origin for this request, from the browser's
-    Origin header. An IP address cannot be an rp id, and a plain-http origin
-    is only a secure context on localhost."""
+def configured_origins() -> frozenset[str]:
+    """WEBAUTHN_ORIGINS: the addresses the console is served at, as
+    scheme://host[:port], comma-separated."""
+    out = set()
+    for part in (os.environ.get("WEBAUTHN_ORIGINS") or "").split(","):
+        parts = urlsplit(part.strip())
+        if parts.scheme and parts.netloc:
+            out.add(f"{parts.scheme.lower()}://{parts.netloc.lower()}")
+    return frozenset(out)
+
+
+def relying_party(origin_header: str | None, *, local_console: str | None = None) -> RelyingParty:
+    """The rp id and expected origin for this request. The browser's Origin
+    header says which page asked; it is accepted only when that page is the
+    console's own (see the module docstring). `local_console` is the
+    host:port the console answers on locally, when the caller knows it from
+    the server's side; without it no localhost page is the console.
+    An IP address cannot be an rp id, and a plain-http origin is only a
+    secure context on localhost."""
     if not origin_header:
         raise PasskeyError("the browser sent no Origin; passkeys need a normal page load")
     parts = urlsplit(origin_header)
@@ -110,6 +133,18 @@ def relying_party(origin_header: str | None) -> RelyingParty:
     else:
         rp_id = host
     origin = f"{parts.scheme}://{parts.netloc.lower()}"
+    allowed = configured_origins()
+    if allowed:
+        if origin not in allowed:
+            raise PasskeyError("this page is not the dashboard's address (WEBAUTHN_ORIGINS)")
+    elif host in _LOCAL_HOSTS:
+        # rp ids ignore ports: every program on this machine serving a page
+        # on localhost shares this one.
+        if not local_console or parts.netloc.lower() != local_console.lower():
+            raise PasskeyError("this page is not the dashboard; passkeys work only on the dashboard's own address")
+    elif host != rp_id:
+        raise PasskeyError(f"WEBAUTHN_RP_ID shares passkeys across {rp_id}; name the dashboard's own address "
+                           f"in WEBAUTHN_ORIGINS")
     return RelyingParty(rp_id=rp_id, origin=origin)
 
 
@@ -247,7 +282,12 @@ async def login(pool: AsyncConnectionPool, rp: RelyingParty, challenge_id: str, 
     if not key:
         raise refused
     handle = ((credential.get("response") or {}).get("userHandle"))
-    if handle and key["webauthn_handle"] and base64url_to_bytes(handle) != bytes(key["webauthn_handle"]):
+    try:
+        mismatched = bool(handle and key["webauthn_handle"]
+                          and base64url_to_bytes(str(handle)) != bytes(key["webauthn_handle"]))
+    except Exception as e:  # noqa: BLE001 -- a malformed handle was a 500 (audit B34)
+        raise refused from e
+    if mismatched:
         raise refused
     try:
         verified = verify_authentication_response(

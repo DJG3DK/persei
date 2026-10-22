@@ -85,7 +85,8 @@ def test_the_rp_id_is_the_pages_host(monkeypatch):
     monkeypatch.delenv("WEBAUTHN_RP_ID", raising=False)
     rp = passkeys.relying_party("https://agent.example.com")
     assert rp == passkeys.RelyingParty("agent.example.com", "https://agent.example.com")
-    assert passkeys.relying_party("http://localhost:8100") == passkeys.RelyingParty("localhost", "http://localhost:8100")
+    assert passkeys.relying_party("http://localhost:8100", local_console="localhost:8100") == \
+        passkeys.RelyingParty("localhost", "http://localhost:8100")
 
 
 @pytest.mark.parametrize("origin, why", [
@@ -101,10 +102,50 @@ def test_origins_a_passkey_cannot_work_on_are_refused_plainly(monkeypatch, origi
 
 def test_a_configured_parent_domain_is_shared_by_its_subdomains_only(monkeypatch):
     monkeypatch.setenv("WEBAUTHN_RP_ID", "example.com")
+    monkeypatch.setenv("WEBAUTHN_ORIGINS", "https://agent.example.com, https://example.com")
     assert passkeys.relying_party("https://agent.example.com").rp_id == "example.com"
     assert passkeys.relying_party("https://example.com").rp_id == "example.com"
     with pytest.raises(passkeys.PasskeyError):
         passkeys.relying_party("https://badexample.com")
+
+
+def test_a_sibling_under_a_parent_rp_id_is_not_the_console(monkeypatch):
+    """B26 (2026-10-22): with a parent rp id, any subdomain's Origin was
+    taken as the expected one, so a page on chat.example.com could run the
+    ceremony and relay the assertion with that Origin."""
+    monkeypatch.setenv("WEBAUTHN_RP_ID", "example.com")
+    monkeypatch.setenv("WEBAUTHN_ORIGINS", "https://agent.example.com")
+    with pytest.raises(passkeys.PasskeyError, match="WEBAUTHN_ORIGINS"):
+        passkeys.relying_party("https://chat.example.com")
+    monkeypatch.delenv("WEBAUTHN_ORIGINS")
+    with pytest.raises(passkeys.PasskeyError, match="WEBAUTHN_ORIGINS"):
+        passkeys.relying_party("https://agent.example.com")
+
+
+@pytest.mark.parametrize("origin, console", [
+    ("http://localhost:5173", "localhost:8100"),
+    ("http://localhost:8100", None),
+    ("http://localhost", "localhost:8100"),
+])
+def test_another_localhost_port_is_not_the_console(monkeypatch, origin, console):
+    monkeypatch.delenv("WEBAUTHN_RP_ID", raising=False)
+    monkeypatch.delenv("WEBAUTHN_ORIGINS", raising=False)
+    with pytest.raises(passkeys.PasskeyError, match="not the dashboard"):
+        passkeys.relying_party(origin, local_console=console)
+
+
+@pytest.mark.parametrize("host, server, bind, expected", [
+    ("localhost:8100", ("127.0.0.1", 8100), "", "localhost:8100"),
+    ("localhost:5173", ("127.0.0.1", 8100), "", None),
+    ("localhost:8200", ("172.18.0.4", 8100), "127.0.0.1", "localhost:8200"),
+    ("localhost:8200", ("172.18.0.4", 8100), "0.0.0.0", None),
+    ("agent.example.com", ("127.0.0.1", 8100), "", None),
+])
+def test_the_local_console_comes_from_the_server_side(monkeypatch, host, server, bind, expected):
+    from agent.routers import passkeys as routes
+    monkeypatch.setenv("BIND_ADDRESS", bind)
+    req = SimpleNamespace(headers={"host": host}, scope={"server": server})
+    assert routes._local_console(req) == expected
 
 
 def test_a_passkey_name_is_trimmed_and_never_empty():
@@ -130,7 +171,8 @@ async def app_client(monkeypatch):
     from agent.routers import passkeys as passkey_routes
 
     monkeypatch.delenv("WEBAUTHN_RP_ID", raising=False)
-    rate_limit.reset_rate_limits() if hasattr(rate_limit, "reset_rate_limits") else None
+    monkeypatch.delenv("WEBAUTHN_ORIGINS", raising=False)
+    rate_limit.reset_rate_limits()
     schema = f"passkeys_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(PG_DSN, autocommit=True) as conn:
         conn.execute(f"CREATE SCHEMA {schema}")
@@ -166,11 +208,11 @@ async def _signed_in(c, email="danny@example.com", password="Correct-Horse-9"):
     return row
 
 
-async def _add_passkey(c, authn, password="Correct-Horse-9", name="Danny's phone"):
+async def _add_passkey(c, authn, password="Correct-Horse-9", name="Danny's phone", origin=ORIGIN):
     r = await c.post("/api/auth/passkeys/register/options", json={"password": password})
     assert r.status_code == 200, r.text
     opts = r.json()
-    cred = authn.create(opts["options"])
+    cred = authn.create(opts["options"], origin)
     r = await c.post("/api/auth/passkeys/register/verify",
                      json={"challenge_id": opts["challenge_id"], "credential": cred, "name": name})
     assert r.status_code == 201, r.text
@@ -277,6 +319,18 @@ async def test_an_unknown_credential_gets_the_same_answer_as_a_bad_one(app_clien
     assert r.status_code == 401 and r.json()["detail"] == "that passkey was not accepted"
 
 
+async def test_a_malformed_user_handle_is_refused_not_a_crash(app_client):
+    c, authn = app_client, SoftAuthenticator()
+    await _signed_in(c)
+    await _add_passkey(c, authn)
+    c.cookies.clear()
+    opts = (await c.post("/api/auth/passkeys/login/options")).json()
+    cred = authn.get(opts["options"])
+    cred["response"]["userHandle"] = "!!not base64!!"
+    r = await c.post("/api/auth/passkeys/login/verify", json={"challenge_id": opts["challenge_id"], "credential": cred})
+    assert r.status_code == 401 and r.json()["detail"] == "that passkey was not accepted"
+
+
 async def test_one_account_cannot_rename_or_remove_anothers_passkey(app_client):
     c, authn = app_client, SoftAuthenticator()
     await _signed_in(c)
@@ -299,6 +353,31 @@ async def test_rename_and_remove_your_own(app_client):
     assert (await _passkey_login(c, authn)).status_code == 401, "a removed passkey no longer signs in"
 
 
+async def test_a_password_reset_removes_every_passkey(app_client):
+    """B27 (2026-10-22): sessions were revoked on a reset, passkeys were
+    not, so one planted with a stolen session still signed in after the
+    reset meant to end that session's reach."""
+    c, authn = app_client, SoftAuthenticator()
+    user = await _signed_in(c)
+    await _add_passkey(c, authn)
+    async with c.pool.connection() as conn:
+        await conn.execute("INSERT INTO agent_password_resets (user_id, code_hash, expires_at) "
+                           "VALUES (%s, %s, now() + interval '30 minutes')", (user["id"], auth._hash_token("123456")))
+    assert await auth.reset_password(c.pool, user["email"], "123456", "Fresh-Horse-10")
+    assert (await _passkey_login(c, authn)).status_code == 401
+
+
+async def test_a_password_change_removes_every_passkey_and_says_so(app_client):
+    c, authn = app_client, SoftAuthenticator()
+    await _signed_in(c)
+    await _add_passkey(c, authn)
+    r = await c.post("/api/auth/change-password",
+                     json={"current_password": "Correct-Horse-9", "new_password": "Fresh-Horse-10-x"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True, "passkeys_removed": 1}
+    assert (await _passkey_login(c, authn)).status_code == 401
+
+
 async def test_the_password_and_code_sign_in_still_works_beside_passkeys(app_client):
     c, authn = app_client, SoftAuthenticator()
     await _signed_in(c)
@@ -306,3 +385,46 @@ async def test_the_password_and_code_sign_in_still_works_beside_passkeys(app_cli
     c.cookies.clear()
     r = await c.post("/api/auth/login", json={"email": "danny@example.com", "password": "Correct-Horse-9"})
     assert r.status_code == 200 and r.json()["user"]["email"] == "danny@example.com"
+
+
+async def test_an_assertion_made_on_a_sibling_origin_does_not_sign_in(app_client, monkeypatch):
+    """B26: rp id example.com, console on agent.example.com, a hostile page
+    on chat.example.com. Asking with its own Origin is refused outright, and
+    an assertion it made for a challenge the console handed out does not
+    verify either."""
+    monkeypatch.setenv("WEBAUTHN_RP_ID", "example.com")
+    monkeypatch.setenv("WEBAUTHN_ORIGINS", ORIGIN)
+    c, authn = app_client, SoftAuthenticator()
+    await _signed_in(c)
+    await _add_passkey(c, authn)
+    c.cookies.clear()
+    sibling = {"Origin": "https://chat.example.com"}
+    assert (await c.post("/api/auth/passkeys/login/options", headers=sibling)).status_code == 400
+
+    opts = (await c.post("/api/auth/passkeys/login/options")).json()
+    cred = authn.get(opts["options"], origin="https://chat.example.com")
+    for headers in (sibling, {}):
+        r = await c.post("/api/auth/passkeys/login/verify", headers=headers,
+                         json={"challenge_id": opts["challenge_id"], "credential": cred})
+        assert r.status_code in (400, 401) and auth.SESSION_COOKIE_NAME not in r.cookies
+    assert (await _passkey_login(c, authn)).status_code == 200, "the console itself still signs in"
+
+
+async def test_an_assertion_made_on_another_localhost_port_does_not_sign_in(app_client):
+    """B26: the desktop app's console on localhost:8100, a dev server on
+    localhost:5173 in the same browser. Same rp id, different program."""
+    import httpx
+    c, authn = app_client, SoftAuthenticator()
+    local = "http://localhost:8100"
+    async with httpx.AsyncClient(transport=c._transport, base_url=local, headers={"Origin": local}) as lc:
+        lc.pool = c.pool
+        await _signed_in(lc)
+        await _add_passkey(lc, authn, origin=local)
+        lc.cookies.clear()
+        r = await lc.post("/api/auth/passkeys/login/options", headers={"Origin": "http://localhost:5173"})
+        assert r.status_code == 400
+        opts = (await lc.post("/api/auth/passkeys/login/options")).json()
+        cred = authn.get(opts["options"], origin="http://localhost:5173")
+        r = await lc.post("/api/auth/passkeys/login/verify", json={"challenge_id": opts["challenge_id"], "credential": cred})
+        assert r.status_code == 401
+        assert (await _passkey_login(lc, authn, origin=local)).status_code == 200, "the desktop app's own sign-in still works"

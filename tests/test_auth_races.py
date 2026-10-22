@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import time
 import uuid
 from types import SimpleNamespace
 
@@ -97,6 +98,26 @@ async def test_a_reset_code_sets_one_password_under_concurrency(pool):
         results = await asyncio.gather(*[
             auth.reset_password(pool, user["email"], code, f"new-password-{i:03d}") for i in range(CONCURRENCY)])
         assert results.count(True) == 1, f"round {round_}: {results.count(True)} resets succeeded"
+
+
+async def test_a_password_change_works_before_the_passkey_table_exists(pool):
+    user = await _user(pool)
+    assert await auth.change_password(pool, user["id"], "chosen-password-789") == 0
+
+
+async def test_the_code_that_finishes_enrolment_cannot_be_replayed_at_login(pool, monkeypatch):
+    """B30 (2026-10-22): enrolment accepted a code from the next step but
+    recorded the wall clock's, so the same code passed once more at login."""
+    import pyotp
+
+    secret = "JBSWY3DPEHPK3PXP"
+    user = await _user(pool)
+    await _execute(pool, "UPDATE agent_users SET totp_secret_enc = 'x' WHERE id = %s", (user["id"],))
+    monkeypatch.setattr(auth, "_decrypt_totp_secret", lambda config, enc: secret)
+    totp = pyotp.TOTP(secret)
+    next_code = totp.at((int(time.time()) // totp.interval + 1) * totp.interval)
+    await auth.confirm_totp_setup(pool, None, user["id"], next_code)
+    assert await auth.verify_totp_or_recovery(pool, None, user["id"], next_code) is False
 
 
 async def test_a_password_change_voids_outstanding_reset_codes(pool):

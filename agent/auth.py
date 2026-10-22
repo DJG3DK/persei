@@ -672,7 +672,10 @@ async def delete_user(pool: AsyncConnectionPool, user_id: int) -> None:
         await conn.execute("DELETE FROM agent_users WHERE id = %s", (user_id,))
 
 
-async def change_password(pool: AsyncConnectionPool, user_id: int, new_password: str) -> None:
+async def change_password(pool: AsyncConnectionPool, user_id: int, new_password: str) -> int:
+    """Sets the password, and removes what the old one could have planted:
+    reset codes, every session, every passkey. Returns how many passkeys
+    went, so the caller can say so."""
     async with pool.connection() as conn:
         await conn.execute(
             "UPDATE agent_users SET password_hash = %s, must_change_password = FALSE WHERE id = %s",
@@ -684,11 +687,21 @@ async def change_password(pool: AsyncConnectionPool, user_id: int, new_password:
             "UPDATE agent_password_resets SET used_at = now() WHERE user_id = %s AND used_at IS NULL",
             (user_id,),
         )
+        # A passkey signs in on its own, so one planted with a stolen
+        # session outlived the reset meant to end that session's reach
+        # (audit B27, 2026-10-22). The table is absent until
+        # passkeys.ensure_schema has run once.
+        removed = 0
+        cur = await conn.execute("SELECT to_regclass('agent_passkeys') AS t")
+        if (await cur.fetchone())["t"]:
+            cur = await conn.execute("DELETE FROM agent_passkeys WHERE user_id = %s", (user_id,))
+            removed = cur.rowcount or 0
     # audit H-4: revoke every other session on a password change, exactly as
     # reset_password does. A password change is often a response to a suspected
     # compromise; leaving other sessions live defeats the point. This was the
     # asymmetry the audit flagged -- reset_password got it right, this did not.
     await revoke_all_sessions(pool, user_id)
+    return removed
 
 
 # --- sessions ---------------------------------------------------------------
@@ -784,7 +797,11 @@ async def confirm_totp_setup(pool: AsyncConnectionPool, config: Config, user_id:
         raise HTTPException(400, "no pending 2FA setup for this account")
     secret = _decrypt_totp_secret(config, row["totp_secret_enc"])
     totp = pyotp.TOTP(secret)
-    if not totp.verify(code, valid_window=1):
+    # The step the code was minted for, not the wall clock's: a code from
+    # the next step recorded as this one could be replayed once at login
+    # (the M-2 bug, left here until audit B30, 2026-10-22).
+    matched_step = _matched_totp_step(totp, code)
+    if matched_step is None:
         raise HTTPException(400, "invalid code")
     codes = [f"{secrets.token_hex(3)}-{secrets.token_hex(3)}" for _ in range(RECOVERY_CODE_COUNT)]
     async with pool.connection() as conn:
@@ -794,7 +811,7 @@ async def confirm_totp_setup(pool: AsyncConnectionPool, config: Config, user_id:
         # sees totp_last_used_step, which enrollment never touched before).
         await conn.execute(
             "UPDATE agent_users SET totp_enabled = TRUE, totp_last_used_step = %s WHERE id = %s",
-            (int(time.time()) // totp.interval, user_id),
+            (matched_step, user_id),
         )
         await conn.execute("DELETE FROM agent_recovery_codes WHERE user_id = %s", (user_id,))
         for code_str in codes:
