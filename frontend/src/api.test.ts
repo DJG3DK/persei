@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AuthError, getBenchmarks, getMe, listTasks, login, logout, setAuthFailureHandler, unsubscribePush, verify2FA } from "./api";
+import { AuthError, deletePasskey, getBenchmarks, getMe, listPasskeys, listTasks, login, logout, passkeyLoginOptions, setAuthFailureHandler, unsubscribePush, verify2FA } from "./api";
 import { response, user } from "./test/fixtures";
 
 // api.ts carries several invariants that its own comments record as having
@@ -59,6 +59,19 @@ describe("apiFetch — authenticated requests", () => {
     await expect(listTasks()).rejects.toThrow(/timed out after \d+s/);
   });
 
+  it.each([
+    ["listPasskeys", () => listPasskeys()],
+    ["deletePasskey", () => deletePasskey(1)],
+  ])("%s is a signed-in call: a 401 is an expired session (audit U26)", async (_name, call) => {
+    const spy = stubFetch(async () => response({ detail: "nope" }, { status: 401 }));
+    const onFail = vi.fn();
+    setAuthFailureHandler(onFail);
+
+    await expect(call()).rejects.toBeInstanceOf(AuthError);
+    expect(onFail).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("passes other network errors through untouched", async () => {
     stubFetch(async () => {
       throw new TypeError("Failed to fetch");
@@ -86,6 +99,15 @@ describe("pre-auth endpoints", () => {
     setAuthFailureHandler(onFail);
 
     await expect(verify2FA("tmp", "000000")).rejects.toThrow("invalid code");
+    expect(onFail).not.toHaveBeenCalled();
+  });
+
+  it("passkey sign-in does not trigger the auth-failure handler on 401", async () => {
+    stubFetch(async () => response({ detail: "no" }, { status: 401 }));
+    const onFail = vi.fn();
+    setAuthFailureHandler(onFail);
+
+    await expect(passkeyLoginOptions()).rejects.toThrow("no");
     expect(onFail).not.toHaveBeenCalled();
   });
 

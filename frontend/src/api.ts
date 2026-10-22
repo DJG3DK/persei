@@ -107,7 +107,13 @@ interface PasskeyChallenge {
 }
 
 async function passkeyCall<T>(path: string, init: RequestInit, fallback: string): Promise<T> {
-  const res = await fetch(`${API_BASE}/auth/passkeys${path}`, {
+  // Only /login/* is pre-auth. Everything else here is a signed-in call and
+  // goes through apiFetch, so an expired session lands on the sign-in screen
+  // and a hung request times out; until 2026-10-22 (audit U26) all of them
+  // used raw fetch and showed "could not load passkeys: 401". A wrong
+  // password on /register/options is a 403, so this never logs anyone out.
+  const call = path.startsWith("/login/") ? fetch : apiFetch;
+  const res = await call(`${API_BASE}/auth/passkeys${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init.headers || {}) },
   });
