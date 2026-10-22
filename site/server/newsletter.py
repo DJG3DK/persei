@@ -447,11 +447,23 @@ def _ready(kind: str) -> HTMLResponse:
     return _page("Your download is starting", body, head=head)
 
 
+def _known_kind(kind: str) -> str | None:
+    """The kind as this module's own constant, or None. The value that goes
+    on into a page or a redirect is the table's string, never the one from
+    the URL: equal, but not the visitor's (2026-10-22, code scanning #86, #87
+    -- the membership check already made it safe; this makes it evident)."""
+    for known in _KINDS:
+        if known == kind:
+            return known
+    return None
+
+
 @app.get("/get/{kind}")
 async def get_form(request: Request, kind: str):
-    if kind not in _KINDS:
+    known = _known_kind(kind)
+    if known is None:
         return RedirectResponse("/#install", status_code=303)
-    return _ready(kind) if _registered(request) else _form(kind)
+    return _ready(known) if _registered(request) else _form(known)
 
 
 @app.post("/get/{kind}")
@@ -459,8 +471,10 @@ async def register(request: Request, kind: str, name: str = Form(""), email: str
                    updates: str = Form(""), website: str = Form("", alias=HONEYPOT_FIELD)):
     """Store a download registration, then start the download. Never a bare
     status: there is no script on the page to show one."""
-    if kind not in _KINDS:
+    known = _known_kind(kind)
+    if known is None:
         return RedirectResponse("/#install", status_code=303)
+    kind = known
     wants_updates = updates.strip() == "1"
     name = " ".join(name.split())[:120]
     email = email.strip().lower()[:254]
