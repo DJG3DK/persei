@@ -294,16 +294,31 @@ pub fn prepare(app: &AppHandle) -> Result<PathBuf, String> {
     // Linux: the stack runs as this account (docker/agent/entrypoint.sh,
     // step 5), so the projects folder stays the operator's own; Docker
     // Desktop ignores ownership and leaves these empty. The data directory
-    // was just made by this process, so its owner is this account.
+    // was just made by this process, so its owner is this account. Its
+    // group is not the account's: after the docker-group restart the app
+    // runs under `sg docker`, the directory got the docker gid, and that was
+    // written as PGID (2026-10-22). The group comes from the passwd entry.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         if let Ok(meta) = std::fs::metadata(&dst) {
-            content = fill_owner(&content, meta.uid(), meta.gid());
+            let gid = std::process::Command::new("getent")
+                .args(["passwd", &meta.uid().to_string()])
+                .output()
+                .ok()
+                .and_then(|o| passwd_gid(&String::from_utf8_lossy(&o.stdout)))
+                .unwrap_or(meta.gid());
+            content = fill_owner(&content, meta.uid(), gid);
         }
     }
     write_atomic(&env, content.as_bytes())?;
     Ok(dst)
+}
+
+/// The primary group in a passwd entry, `sam:x:1000:1000:Sam:/home/sam:/bin/sh`.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub fn passwd_gid(entry: &str) -> Option<u32> {
+    entry.lines().next()?.split(':').nth(3)?.parse().ok()
 }
 
 /// PUID and PGID when the file has none (an empty `PUID=` from the example
@@ -1675,6 +1690,16 @@ mod tests {
         );
         let absent = fill_owner("OTHER=1\n", 1000, 1000);
         assert_eq!(get_env_value(&absent, "PUID").as_deref(), Some("1000"));
+    }
+
+    #[test]
+    fn pgid_is_the_accounts_own_group_not_the_one_it_runs_under() {
+        assert_eq!(
+            passwd_gid("sam:x:1000:1001:Sam:/home/sam:/bin/bash\n"),
+            Some(1001)
+        );
+        assert_eq!(passwd_gid(""), None, "no entry: the directory's gid");
+        assert_eq!(passwd_gid("sam:x:1000"), None);
     }
 
     #[test]
