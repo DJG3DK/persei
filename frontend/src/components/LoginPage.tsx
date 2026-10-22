@@ -173,7 +173,7 @@ export function LoginPage({ onLoggedIn }: Props) {
               onKeyDown={(e) => e.key === "Enter" && handleVerify()}
             />
           </label>
-          {error && <div className="error-banner">{error}</div>}
+          {error && <div className="error-banner" role="alert">{error}</div>}
           <button className="btn btn-primary btn-block" disabled={submitting || !code.trim()} onClick={handleVerify}>
             {submitting ? "Verifying..." : "Verify"}
           </button>
@@ -203,7 +203,7 @@ export function LoginPage({ onLoggedIn }: Props) {
               onKeyDown={(e) => e.key === "Enter" && handleSendResetCode()}
             />
           </label>
-          {error && <div className="error-banner">{error}</div>}
+          {error && <div className="error-banner" role="alert">{error}</div>}
           <button className="btn btn-primary btn-block" disabled={submitting || !email.trim()} onClick={handleSendResetCode}>
             {submitting ? "Sending..." : "Send reset code"}
           </button>
@@ -253,7 +253,7 @@ export function LoginPage({ onLoggedIn }: Props) {
           <p className="login-sub" style={{ marginTop: -8, fontSize: 12 }}>
             At least 12 characters, with an uppercase letter, a lowercase letter, and a digit.
           </p>
-          {error && <div className="error-banner">{error}</div>}
+          {error && <div className="error-banner" role="alert">{error}</div>}
           <button
             className="btn btn-primary btn-block"
             disabled={submitting || !resetCode.trim() || !newPassword || !confirmPassword}
@@ -321,7 +321,7 @@ export function LoginPage({ onLoggedIn }: Props) {
             onKeyDown={(e) => e.key === "Enter" && handleLogin()}
           />
         </label>
-        {error && <div className="error-banner">{error}</div>}
+        {error && <div className="error-banner" role="alert">{error}</div>}
         <button className={`btn btn-block ${passkeysSupported() ? "btn-secondary" : "btn-primary"}`} disabled={submitting || passkeyWaiting || !email.trim() || !password} onClick={handleLogin}>
           {submitting ? "Signing in..." : "Sign in"}
         </button>

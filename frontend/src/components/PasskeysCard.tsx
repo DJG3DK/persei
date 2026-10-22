@@ -75,6 +75,10 @@ export function PasskeysCard() {
   async function rename(key: Passkey) {
     const next = window.prompt("Name this passkey", key.name);
     if (next === null || !next.trim() || next.trim() === key.name) return;
+    // Each action starts clean: until 2026-10-22 (audit U28) a failed add's
+    // error stayed on screen through a successful rename or remove.
+    setError(null);
+    setNotice(null);
     try {
       await renamePasskey(key.id, next);
       await refresh();
@@ -85,6 +89,8 @@ export function PasskeysCard() {
 
   async function remove(key: Passkey) {
     if (!window.confirm(`Remove "${key.name}"? It will no longer sign you in.`)) return;
+    setError(null);
+    setNotice(null);
     try {
       await deletePasskey(key.id);
       setNotice(`"${key.name}" removed.`);
@@ -127,7 +133,7 @@ export function PasskeysCard() {
         </ul>
       )}
       {notice && <div className="settings-notice" role="status">{notice}</div>}
-      {error && <div className="settings-error">{error}</div>}
+      {error && <div className="settings-error" role="alert">{error}</div>}
       {!supported ? (
         <p className="settings-card-sub">This browser can't create passkeys.</p>
       ) : adding ? (

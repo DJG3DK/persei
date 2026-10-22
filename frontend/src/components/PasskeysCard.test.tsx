@@ -65,4 +65,17 @@ describe("PasskeysCard", () => {
     expect(deletePasskey).toHaveBeenCalledWith(7);
     expect(await screen.findByText(/"Danny's phone" removed/)).toBeInTheDocument();
   });
+
+  it("announces an error, and the next action clears it (audit U28)", async () => {
+    listPasskeys.mockResolvedValueOnce([PHONE]).mockResolvedValueOnce([PHONE]);
+    renamePasskey.mockRejectedValueOnce(new Error("could not rename")).mockResolvedValueOnce({ id: 7, name: "Work" });
+    vi.spyOn(window, "prompt").mockReturnValue("Work");
+    render(<PasskeysCard />);
+    await userEvent.click(await screen.findByRole("button", { name: /rename/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("could not rename");
+
+    await userEvent.click(screen.getByRole("button", { name: /rename/i }));
+    expect(renamePasskey).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

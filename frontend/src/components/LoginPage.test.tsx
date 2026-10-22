@@ -88,7 +88,7 @@ describe("LoginPage — signing in", () => {
     await userEvent.type(passwordBox(), "nope");
     await userEvent.click(screen.getByRole("button", { name: /^sign in$/i }));
 
-    expect(await screen.findByText("bad credentials")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("bad credentials");
     expect(onLoggedIn).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: /sign in/i })).toBeInTheDocument();
   });
@@ -201,7 +201,7 @@ describe("LoginPage — password reset", () => {
     await userEvent.click(screen.getByRole("button", { name: /forgot password/i }));
     await userEvent.type(emailBox(), "a@b.c");
     await userEvent.click(screen.getByRole("button", { name: /send reset code/i }));
-    expect(await screen.findByText(/could not send the code: Failed to fetch/)).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not send the code: Failed to fetch/);
     expect(screen.getByRole("heading", { name: /reset your password/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /send reset code/i })).toBeEnabled();
   });
@@ -270,7 +270,7 @@ describe("LoginPage — passkeys", () => {
     passkeyLoginOptions.mockResolvedValue({ challenge_id: "c1", options: { challenge: "AQID", rpId: "agent.example.com" } });
     renderLogin();
     await userEvent.click(screen.getByRole("button", { name: /sign in with a passkey/i }));
-    expect(await screen.findByText(/cancelled or timed out/i)).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/cancelled or timed out/i);
     expect(emailBox()).toBeInTheDocument();
     expect(passwordBox()).toBeInTheDocument();
   });
