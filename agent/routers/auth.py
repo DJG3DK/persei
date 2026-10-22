@@ -346,6 +346,7 @@ async def disable_2fa_endpoint(request: Request, req: Disable2FARequest,
         raise HTTPException(403, "current password required to disable 2FA")
     rate_limit.clear_rate_limit(request, "password-recheck", account=user.id)
     await auth.disable_totp(request.app.state.auth_pool, user.id)
+    await audit.record(audit_store(request), actor=user.email, action="auth.2fa_disable", target=user.email)
     return {"ok": True}
 
 
@@ -501,6 +502,10 @@ async def create_user_endpoint(request: Request, req: CreateUserRequest, user: U
         request.app.state.auth_pool, req.email.strip().lower(), req.password, req.role, req.allowed_repos,
         must_change_password=True,
     )
+    await audit.record(audit_store(request), actor=user.email, action="auth.user_create",
+                       target=row["email"],
+                       detail=req.role if req.role == "admin" else
+                       "user with " + (", ".join(sorted(req.allowed_repos or [])) or "no projects"))
     if req.auto_approve_commands:
         await auth.update_auto_approve(request.app.state.auth_pool, row["id"], True, scope)
         row = {**row, "auto_approve_commands": True, "auto_approve_repos": sorted(set(scope))}
@@ -527,6 +532,9 @@ async def update_user_access_endpoint(request: Request, user_id: int, req: Updat
         if target["role"] == "admin":
             raise HTTPException(400, "the admin account always has full access")
         await auth.update_user_access(request.app.state.auth_pool, user_id, req.allowed_repos)
+        await audit.record(audit_store(request), actor=user.email, action="auth.user_access",
+                           target=target["email"],
+                           detail=", ".join(sorted(req.allowed_repos)) or "no projects")
     if req.auto_approve_commands is not None or req.auto_approve_repos is not None:
         target_user = auth._row_to_user(target)
         enabled = (req.auto_approve_commands if req.auto_approve_commands is not None
@@ -557,4 +565,5 @@ async def delete_user_endpoint(request: Request, user_id: int, user: User = Depe
     if target["role"] == "admin":
         raise HTTPException(400, "cannot delete the admin account")
     await auth.delete_user(request.app.state.auth_pool, user_id)
+    await audit.record(audit_store(request), actor=user.email, action="auth.user_delete", target=target["email"])
     return {"ok": True}

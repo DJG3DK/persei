@@ -70,6 +70,13 @@ ACTIONS: dict[str, str] = {
     "settings.merge_review": "changed the final merge review",
     "auth.passkey_add": "added a passkey to their account",
     "auth.passkey_remove": "removed a passkey from their account",
+    # Account and access changes (audit B33, 2026-10-22): the most
+    # consequential things on the Users and Environment pages left no trace.
+    "auth.user_create": "created an account",
+    "auth.user_access": "changed which projects an account can reach",
+    "auth.user_delete": "deleted an account",
+    "auth.2fa_disable": "turned off two-factor sign-in",
+    "env.update": "changed deployment settings (.env)",
     "settings.auto_approve_repos": "changed which projects auto-approve covers",
     "github.source_policy": "changed a GitHub inbox source",
     "inbox.auto_start": "started a task from the inbox automatically (policy: auto)",

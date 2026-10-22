@@ -9,12 +9,13 @@ server.py, which includes this router and would make that import a cycle.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from agent.auth import User, require_full_auth
 
-from agent import auth
+from agent import audit, auth
 from agent import env_config
+from agent.routers import audit_store
 from fastapi import HTTPException
 from pydantic import BaseModel
 import logging
@@ -43,7 +44,7 @@ async def get_env_config(user: User = Depends(require_full_auth)):
 
 
 @router.post("")
-async def save_env_config(req: SaveEnvKeysRequest, user: User = Depends(require_full_auth)):
+async def save_env_config(req: SaveEnvKeysRequest, request: Request, user: User = Depends(require_full_auth)):
     """Write new values for allow-listed keys.
 
     Restarts are reported, not performed: restarting the router interrupts every
@@ -66,6 +67,10 @@ async def save_env_config(req: SaveEnvKeysRequest, user: User = Depends(require_
         logger.warning("env-config write failed for %s: %s", sorted(req.updates), type(e).__name__)
         raise HTTPException(status_code=500, detail="could not write the env file")
     logger.info("env-config updated by %s: %s", user.email, ", ".join(result["updated"]))
+    # Key names only: the log is readable by every admin, and a value here
+    # would be the one place a secret is shown back.
+    await audit.record(audit_store(request), actor=user.email, action="env.update",
+                       detail=", ".join(result["updated"]))
     return result
 
 

@@ -156,7 +156,7 @@ def test_every_recorded_action_is_in_the_registry():
     for path in (REPO / "agent").rglob("*.py"):
         if path.name == "audit.py":
             continue
-        for m in re.finditer(r'action="([a-z_]+\.[a-z_]+)"', path.read_text()):
+        for m in re.finditer(r'action="([a-z0-9_]+\.[a-z0-9_]+)"', path.read_text()):
             used.add(m.group(1))
     unknown = used - set(audit.ACTIONS)
     assert not unknown, f"recorded but not in ACTIONS (they would be dropped): {sorted(unknown)}"
@@ -271,3 +271,104 @@ def test_trimming_still_happens_on_a_store_that_has_no_offset():
         f"asked for {min(store.limits)} with a cap of {audit.MAX_RECORDS}"
     )
     assert len(store.rows) == audit.MAX_RECORDS
+
+
+
+# ---------------------------------------------------------------------------
+# Account and access changes are recorded (audit B33, 2026-10-22)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def admin_client(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import agent.server as srv
+    from agent.auth import User
+    from agent.routers import auth as auth_routes
+    from agent.routers import env_config as env_routes
+
+    me = User(id=1, email="admin@b.co", role="admin", allowed_repos=None, totp_enabled=True,
+              must_change_password=False)
+    recorded = []
+
+    async def record(store, **kw):
+        recorded.append(kw)
+
+    monkeypatch.setattr(auth_routes.audit, "record", record)
+    monkeypatch.setattr(env_routes.audit, "record", record)
+    monkeypatch.setattr(srv.app.state, "auth_pool", object(), raising=False)
+    monkeypatch.setitem(srv.app.dependency_overrides, srv.auth.require_full_auth, lambda: me)
+    monkeypatch.setitem(srv.app.dependency_overrides, srv.auth.get_current_user, lambda: me)
+    client = TestClient(srv.app)
+    client.recorded = recorded
+    return client
+
+
+def test_creating_changing_and_deleting_an_account_are_recorded(admin_client, monkeypatch):
+    import agent.server as srv
+    from agent import config as agent_config
+    from agent import features
+
+    row = {"id": 2, "email": "sam@b.co", "role": "user", "allowed_repos": ["proj"], "totp_enabled": False,
+           "must_change_password": True, "auto_approve_commands": False, "require_merge_review": True}
+
+    async def none(*a, **k):
+        return None
+
+    async def created(*a, **k):
+        return row
+
+    async def by_id(pool, uid):
+        return row
+
+    monkeypatch.setattr(features, "enabled", lambda name: True)
+    monkeypatch.setattr(agent_config, "PROJECTS", {"proj": {}, "other": {}})
+    monkeypatch.setattr(srv.auth, "get_user_by_email", none)
+    monkeypatch.setattr(srv.auth, "create_user", created)
+    monkeypatch.setattr(srv.auth, "get_user_by_id", by_id)
+    monkeypatch.setattr(srv.auth, "update_user_access", none)
+    monkeypatch.setattr(srv.auth, "delete_user", none)
+
+    r = admin_client.post("/api/auth/users", json={"email": "sam@b.co", "password": "Long-enough-passw0rd!",
+                                                   "role": "user", "allowed_repos": ["proj"]})
+    assert r.status_code == 201, r.text
+    assert admin_client.patch("/api/auth/users/2", json={"allowed_repos": ["proj", "other"]}).status_code == 200
+    assert admin_client.delete("/api/auth/users/2").status_code == 200
+    got = [(e["action"], e["actor"], e["target"], e.get("detail")) for e in admin_client.recorded]
+    assert got == [
+        ("auth.user_create", "admin@b.co", "sam@b.co", "user with proj"),
+        ("auth.user_access", "admin@b.co", "sam@b.co", "other, proj"),
+        ("auth.user_delete", "admin@b.co", "sam@b.co", None),
+    ]
+
+
+def test_turning_off_2fa_is_recorded(admin_client, monkeypatch):
+    import agent.server as srv
+    from agent.auth import User
+
+    me = User(id=3, email="u@b.co", role="user", allowed_repos=[], totp_enabled=True, must_change_password=False)
+    monkeypatch.setitem(srv.app.dependency_overrides, srv.auth.require_full_auth, lambda: me)
+
+    async def user_row(pool, uid):
+        return {"id": 3, "password_hash": "right"}
+
+    async def none(*a, **k):
+        return None
+
+    monkeypatch.setattr(srv.auth, "get_user_by_id", user_row)
+    monkeypatch.setattr(srv.auth, "verify_password", lambda pw, h: pw == h)
+    monkeypatch.setattr(srv.auth, "disable_totp", none)
+    assert admin_client.post("/api/auth/2fa/disable", json={"password": "right"}).status_code == 200
+    assert [(e["action"], e["target"]) for e in admin_client.recorded] == [("auth.2fa_disable", "u@b.co")]
+
+
+def test_an_env_change_records_the_key_names_and_never_a_value(admin_client, monkeypatch):
+    from agent import env_config
+
+    monkeypatch.setattr(env_config, "set_keys",
+                        lambda updates: {"updated": sorted(updates), "restart_required": []})
+    r = admin_client.post("/api/env-config", json={"updates": {"OPENROUTER_API_KEY": "sk-secret-value"}})
+    assert r.status_code == 200, r.text
+    (entry,) = admin_client.recorded
+    assert entry["action"] == "env.update" and entry["detail"] == "OPENROUTER_API_KEY"
+    assert "sk-secret-value" not in repr(entry)
