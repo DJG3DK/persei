@@ -82,6 +82,16 @@ def _fresh_limiter():
     newsletter.reset_subscribe_limiter()
 
 
+@pytest.fixture(autouse=True)
+def _no_github(monkeypatch):
+    # The download page resolves GitHub's file URL itself (S4), so a test that
+    # does not bring its own release must not reach the real API.
+    newsletter.reset_download_cache()
+    monkeypatch.setattr(newsletter.httpx, "AsyncClient", _FakeGitHub(fail=True))
+    yield
+    newsletter.reset_download_cache()
+
+
 def _post(client, **form):
     # follow_redirects off: the redirect IS the behaviour under test.
     return client.post("/subscribe", data=form, follow_redirects=False)
@@ -454,19 +464,48 @@ def test_the_form_asks_for_a_name_and_an_email_and_leaves_updates_unticked():
     assert "danny@perseiagent.ai" in page, "how to have the data deleted"
 
 
-def test_registering_stores_the_row_sets_the_cookie_and_starts_the_download(pool):
+_LINUX_BASE = "https://github.com/DJG3DK/persei/releases/download/v0.9.4/"
+_LINUX_RELEASE = {"assets": [{"name": n, "browser_download_url": _LINUX_BASE + n}
+                             for n in ("Persei_0.9.4_amd64.AppImage", "Persei_0.9.4_amd64.deb")]}
+
+
+def test_registering_stores_the_row_sets_the_cookie_and_starts_the_download(pool, monkeypatch):
+    monkeypatch.setattr(newsletter.httpx, "AsyncClient", _FakeGitHub(_LINUX_RELEASE))
     c = _client()
     r = c.post("/get/linux", data={"name": "  Ada   Lovelace ", "email": " Ada@Example.com "},
                follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/get/linux"
+    assert r.status_code == 200
     assert pool.regs == [{"name": "Ada Lovelace", "email": "ada@example.com", "platform": "linux", "updates": False}]
     assert pool.store == {}, "not on the newsletter without the box ticked"
     cookie = r.headers["set-cookie"]
     assert newsletter.COOKIE in cookie and "HttpOnly" in cookie and "Secure" in cookie
-    page = c.get("/get/linux").text
-    assert 'http-equiv="refresh" content="1;url=/download/linux"' in page
-    assert "install-linux.sh | sh" in page, "the one-liner shows once registered"
+    for page in (r.text, c.get("/get/linux").text):
+        assert f'http-equiv="refresh" content="1;url={_LINUX_BASE}Persei_0.9.4_amd64.AppImage"' in page
+        assert f'href="{_LINUX_BASE}Persei_0.9.4_amd64.deb"' in page
+        assert "install-linux.sh | sh" in page, "the one-liner shows once registered"
+        assert "<script" not in page
     assert c.get("/download/linux", follow_redirects=False).status_code == 302
+
+
+def test_a_browser_that_blocks_cookies_still_gets_its_download_and_one_row(pool, monkeypatch):
+    """The POST used to 303 to GET /get/<kind>, which asks for the cookie it
+    had just set: without cookies that was the form again, and every lap
+    stored another row (2026-10-22, audit S4). The answer is now the download
+    page itself, pointing at the file."""
+    monkeypatch.setattr(newsletter.httpx, "AsyncClient", _FakeGitHub(_LINUX_RELEASE))
+    c = _client()
+    r = c.post("/get/linux-deb", data={"name": "Ada", "email": "ada@example.com"}, follow_redirects=False)
+    c.cookies.clear()
+    assert r.status_code == 200 and "Your download is starting" in r.text
+    assert f'content="1;url={_LINUX_BASE}Persei_0.9.4_amd64.deb"' in r.text
+    assert '"/download/' not in r.text and "url=/download/" not in r.text, "no link that asks for the cookie"
+    assert len(pool.regs) == 1
+
+
+def test_the_download_page_falls_back_to_the_release_page(pool):
+    r = _client().post("/get/windows", data={"name": "Ada", "email": "ada@example.com"}, follow_redirects=False)
+    assert r.status_code == 200
+    assert f'content="1;url={newsletter.RELEASES_PAGE}"' in r.text
 
 
 def test_ticking_updates_adds_them_to_the_newsletter(pool):

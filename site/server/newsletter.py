@@ -463,23 +463,31 @@ def _form(kind: str, name: str = "", email: str = "", updates: bool = False, err
     return _page(f"Download for {label}", body, status=status)
 
 
-def _ready(kind: str) -> HTMLResponse:
-    """The page the download starts from. A meta refresh, not a script: the
-    redirect it follows ends in a file, so the browser downloads it and stays
-    on this page."""
+async def _ready(kind: str) -> HTMLResponse:
+    """The page the download starts from. A meta refresh, not a script: it
+    points at a file, so the browser downloads it and stays on this page.
+
+    The links are GitHub's own file URLs, resolved here, not /download/<kind>.
+    Those ask for the cookie, so a browser that blocks cookies went from the
+    form to /download, back to the form, and stored a row on every lap
+    (2026-10-22, audit S4). The files are public anyway; the cookie only
+    spares a returning visitor the form."""
     label = _KINDS[kind]
-    head = f'<meta http-equiv="refresh" content="1;url=/download/{kind}">\n'
+    url = html.escape(await _latest_asset(kind) or RELEASES_PAGE)
+    head = f'<meta http-equiv="refresh" content="1;url={url}">\n'
     if kind == "windows":
         extra = """<ol><li>Run the installer</li><li>Let it set up Docker if it asks</li>
 <li>Enter your OpenRouter key and projects folder</li><li>Pick your password and sign in</li></ol>"""
     else:
-        other = ('<a class="quiet" href="/download/linux-deb">the .deb for Debian / Ubuntu</a>' if kind == "linux"
-                 else '<a class="quiet" href="/download/linux">the AppImage</a>')
+        other_kind, other_label = (("linux-deb", "the .deb for Debian / Ubuntu") if kind == "linux"
+                                   else ("linux", "the AppImage"))
+        other_url = html.escape(await _latest_asset(other_kind) or RELEASES_PAGE)
+        other = f'<a class="quiet" href="{other_url}">{other_label}</a>'
         extra = f"""<p>Or install it with one line, which also adds it to your app menu:</p>
 <pre><code>curl -fsSL {html.escape(SITE_URL)}/install-linux.sh | sh</code></pre>
 <p>Prefer a package? Get {other}.</p>"""
     body = f"""<h1>Your download is starting</h1>
-<p>Persei for {html.escape(label)}. If nothing happens, <a class="quiet" href="/download/{kind}">download it here</a>.</p>
+<p>Persei for {html.escape(label)}. If nothing happens, <a class="quiet" href="{url}">download it here</a>.</p>
 {extra}
 <a class="btn" href="/">Back to Persei</a>
 <p class="small">Questions? <a href="mailto:danny@perseiagent.ai">danny@perseiagent.ai</a></p>"""
@@ -502,7 +510,7 @@ async def get_form(request: Request, kind: str):
     known = _known_kind(kind)
     if known is None:
         return RedirectResponse("/#install", status_code=303)
-    return _ready(known) if _registered(request) else _form(known)
+    return await _ready(known) if _registered(request) else _form(known)
 
 
 @app.post("/get/{kind}")
@@ -550,7 +558,9 @@ async def register(request: Request, kind: str, name: str = Form(""), email: str
         logger.exception("download: could not store a registration")
         return _form(kind, name, email, wants_updates, "Something went wrong on my side. Please try again shortly.", 503)
     logger.info("download: registration stored (%s, updates=%s)", kind, wants_updates)
-    response = RedirectResponse(f"/get/{kind}", status_code=303)
+    # The page itself, not a 303 to GET /get/<kind>: that GET asks for the
+    # cookie set here, and without cookies it showed the form again (S4).
+    response = await _ready(kind)
     response.set_cookie(COOKIE, _sign(reg_id), max_age=_COOKIE_MAX_AGE, httponly=True,
                         secure=SITE_URL.startswith("https://"), samesite="lax", path="/")
     return response
