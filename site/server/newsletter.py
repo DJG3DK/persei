@@ -135,6 +135,14 @@ CREATE INDEX IF NOT EXISTS download_registrations_email ON download_registration
 # write for it, and the only thing that truly validates an address is sending
 # to it. This rejects the obviously-not-an-address and lets the rest through.
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+# Control characters in either field. Postgres refuses a NUL in text, so one
+# in the form was a database error and a 503 until 2026-10-22 (audit S7);
+# nothing a person types contains them.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _has_control(*values: str) -> bool:
+    return any(_CONTROL.search(v) for v in values)
 
 # A public HTML form with no CAPTCHA. Five signups from one IP in a minute
 # is a person retrying; thirty is a bot filling the table. Same shape as
@@ -541,6 +549,9 @@ async def register(request: Request, kind: str, name: str = Form(""), email: str
     if website.strip():
         logger.info("download: dropped a registration (honeypot filled)")
         return RedirectResponse("/", status_code=303)
+    if _has_control(name, email):
+        return _form(kind, _CONTROL.sub("", name), _CONTROL.sub("", email), wants_updates,
+                     "Your name or email has a character in it that can't be stored. Please type them again.", 400)
     if not name or not _EMAIL.match(email):
         return _form(kind, name, email, wants_updates,
                      "Please enter your name and a real email address." if not name
@@ -592,6 +603,9 @@ async def subscribe(request: Request, name: str = Form(""), email: str = Form(""
     name = " ".join(name.split())[:120]
     email = email.strip().lower()[:254]
 
+    if _has_control(name, email):
+        logger.info("newsletter: rejected a signup (control character)")
+        return RedirectResponse(FAIL_URL, status_code=303)
     if not name or not _EMAIL.match(email):
         # No address in the log line: this is the one place a bad address
         # would otherwise be written down verbatim.

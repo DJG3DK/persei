@@ -540,6 +540,19 @@ def test_a_bad_entry_shows_the_form_again_with_what_was_typed(pool):
     assert r.status_code == 400 and pool.regs == []
 
 
+@pytest.mark.parametrize("field", ["name", "email"])
+def test_a_control_character_is_a_400_not_a_database_error(pool, field):
+    """Postgres refuses a NUL in text, so one was a 503 (2026-10-22, audit S7)."""
+    form = {"name": "Ada", "email": "ada@example.com"}
+    form[field] = form[field][:2] + "\x00" + form[field][2:]
+    r = _client().post("/get/windows", data=form, follow_redirects=False)
+    assert r.status_code == 400 and pool.regs == []
+    assert "\x00" not in r.text
+    r = _client().post("/subscribe", data=form, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == newsletter.FAIL_URL
+    assert pool.store == {}
+
+
 def test_a_typed_value_cannot_break_out_of_the_page(pool):
     r = _client().post("/get/windows", data={"name": '"><script>alert(1)</script>', "email": "x"})
     assert "<script>alert" not in r.text
