@@ -220,7 +220,8 @@ export async function forgotPassword(email: string): Promise<void> {
     body: JSON.stringify({ email }),
   });
   // Always "ok" from the backend's own side (anti-enumeration) -- nothing
-  // meaningful to throw on here even for a non-2xx, so this never rejects.
+  // meaningful to throw on for a non-2xx. A network error still rejects, and
+  // LoginPage shows it (audit U27: it was swallowed until 2026-10-22).
 }
 
 export async function resetPassword(email: string, code: string, newPassword: string): Promise<void> {

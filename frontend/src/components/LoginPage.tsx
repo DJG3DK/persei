@@ -107,6 +107,8 @@ export function LoginPage({ onLoggedIn }: Props) {
     try {
       await forgotPassword(email.trim());
       setMode("reset");
+    } catch (err) {
+      setError(err instanceof Error ? `could not send the code: ${err.message}` : "could not send the code");
     } finally {
       setSubmitting(false);
     }

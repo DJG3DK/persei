@@ -195,6 +195,17 @@ describe("LoginPage — password reset", () => {
     expect(resetPassword).not.toHaveBeenCalled();
   });
 
+  it("shows a network error instead of hanging on the form (audit U27)", async () => {
+    forgotPassword.mockRejectedValue(new TypeError("Failed to fetch"));
+    renderLogin();
+    await userEvent.click(screen.getByRole("button", { name: /forgot password/i }));
+    await userEvent.type(emailBox(), "a@b.c");
+    await userEvent.click(screen.getByRole("button", { name: /send reset code/i }));
+    expect(await screen.findByText(/could not send the code: Failed to fetch/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /reset your password/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /send reset code/i })).toBeEnabled();
+  });
+
   it("does not reveal whether the address has an account", async () => {
     // The copy is deliberately conditional ("If <email> has an account"), so
     // a reset request cannot be used to enumerate users.
