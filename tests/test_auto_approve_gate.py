@@ -418,3 +418,35 @@ def test_heredocs_written_out_are_still_text():
     assert _losses("bash <<'O'\ncat > x <<'I'\nrm -rf a\nI\nrm -rf src\nO") == ["/workspace/src"]
     # A here-string is not a heredoc: nothing after it is swallowed.
     assert _losses("cat > x <<< 'hi'\nrm -rf src") == ["/workspace/src"]
+
+
+# 2026-10-22 audit, A24: each of these loses uncommitted work, and neither
+# mode asked.
+DISCARDS_WORK = [
+    "git checkout -- .", "git checkout -- src/app.ts", "git checkout .", "git checkout -f HEAD",
+    "git -C /workspace checkout --force main", "git restore .", "git restore --staged --worktree src",
+    "git switch -f main", "git switch --discard-changes main", "git stash -u && git stash drop",
+    "git stash clear", 'python3 -c "import shutil; shutil.rmtree(\'src\')"',
+    "node -e \"require('fs').rmSync('src', {recursive: true})\"", "perl -e 'unlink glob \"src/*\"'",
+    "ruby -e 'FileUtils.rm_rf(\"src\")'", "python3 - <<'EOF'\nimport os\nos.remove('src/app.ts')\nEOF",
+    "/usr/bin/python3.12 -c 'import subprocess; subprocess.run([\"rm\", \"-rf\", \"src\"])'",
+    "rsync -a --delete empty/ src/", "rsync -a --delete-after a/ src/", "truncate -s 0 apps/storefront/src/html.ts",
+    "truncate --size=0 apps/storefront/src/html.ts",
+]
+
+
+@pytest.mark.parametrize("command", DISCARDS_WORK)
+def test_a_form_that_discards_work_asks(command, worktree):
+    assert INTERRUPT_ON_AUTO_APPROVE["bash"]["when"](_req(command)) is True, command
+    assert _auto_when(worktree)(_req(command)) is True, command
+
+
+@pytest.mark.parametrize("command", [
+    "git checkout main", "git checkout -b feature", "git switch main", "git restore --staged src/app.ts",
+    "git stash", "git stash -u", "git stash pop", "git stash list",
+    'python3 -c "import json; print(json.load(open(\'package.json\'))[\'name\'])"',
+    "node -e \"console.log(require('./package.json').version)\"", "python3 scripts/check.py",
+    "rsync -a src/ /tmp/copy/", "truncate -s 0 /tmp/log.txt",
+])
+def test_the_same_tools_used_harmlessly_do_not_ask(command):
+    assert INTERRUPT_ON_AUTO_APPROVE["bash"]["when"](_req(command)) is False, command

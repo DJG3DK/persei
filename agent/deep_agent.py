@@ -446,6 +446,18 @@ _UNPARSEABLE = _ALWAYS + "unparseable"
 # loss: `mv new.ts src/` into a tracked directory overwrites nothing.
 _OVERWRITE = "\x01"
 
+# 2026-10-22 audit, A24: delete forms neither mode asked about. An inline
+# script (`python3 -c`, `node -e`, a heredoc fed to an interpreter) is not
+# parsed: when its text names a delete or a process call, it is unreadable
+# and asks. Not every inline script -- `python3 -c` and `node -e` are how the
+# coder probes, and a prompt for each one is the noise of 2026-09-11.
+_INTERPRETER_INLINE_RE = _re.compile(
+    r"(?:^|[\s;&|(])(?:\S*/)?(?:python[0-9.]*|node|nodejs|perl|ruby|bun|deno)\b[^\n;&|]*?"
+    r"(?:\s(?:-c|-e|-E|-ne|-pe|--eval|-p|--print|eval)(?=[\s'\"])|<<)")
+_INLINE_DELETE_RE = _re.compile(
+    r"rmtree|unlink|rmdir|rmSync|\brm\s*\(|\.rm\b|\bremove\w*\s*\(|truncate|\bsystem\s*\(|subprocess|"
+    r"child_process|\bexec\w*\s*\(|\bspawn\w*\s*\(|\bpopen\b|FileUtils|File\.delete|shutil\.move|\brename\w*\s*\(")
+
 
 def _segments(command: str) -> list[tuple[int, list[str]]]:
     """The command split into simple segments, each tokenised, with the
@@ -665,6 +677,31 @@ def _strip_inert_heredocs(command: str) -> str:
     return "\n".join(out)
 
 
+def _git_discards_edits(tokens: list[str]) -> bool:
+    """`git checkout -- .`, `git checkout -f`, `git restore` (but not a
+    `--staged`-only unstage), `git switch -f` and `git stash drop|clear`:
+    each throws away uncommitted work, as `git reset --hard` does. A plain
+    `git checkout <branch>` refuses to, so it does not ask."""
+    i = 1
+    while i < len(tokens) and tokens[i].startswith("-"):
+        i += 2 if tokens[i] in ("-C", "-c", "--git-dir", "--work-tree") else 1
+    if i >= len(tokens):
+        return False
+    sub, args = tokens[i], tokens[i + 1:]
+    force = any(a in ("-f", "--force", "--discard-changes") for a in args)
+    if sub == "checkout":
+        return force or "--" in args or "." in args
+    if sub == "switch":
+        return force
+    if sub == "restore":
+        staged_only = any(a in ("-S", "--staged") for a in args) and not any(
+            a in ("-W", "--worktree") for a in args)
+        return not staged_only
+    if sub == "stash":
+        return bool(args) and args[0] in ("drop", "clear")
+    return False
+
+
 def _deletions_that_lose_work(command: str) -> list[str]:
     """Targets of this command's deletions that are not scratch. Empty means
     nothing of value is being deleted. A target that cannot be read (a shell
@@ -693,6 +730,10 @@ def _deletions_that_lose_work(command: str) -> list[str]:
             else:
                 losses.append(prefix + resolved)
 
+    inline = _INTERPRETER_INLINE_RE.search(command)
+    if inline and _INLINE_DELETE_RE.search(command, inline.start()):
+        losses.append(_ALWAYS + "an inline script that deletes or runs something")
+
     for depth, tokens in _segments(command):
         while len(outer_cwds) < depth:
             outer_cwds.append(cwd)                            # entering a subshell
@@ -713,6 +754,26 @@ def _deletions_that_lose_work(command: str) -> list[str]:
                 (t.startswith("-") and not t.startswith("--") and "f" in t) or t == "--force"
                 for t in tokens):
             losses.append(_ALWAYS + "git clean -f")           # removes untracked work wholesale
+            continue
+        if head == "git" and _git_discards_edits(tokens):
+            losses.append(_ALWAYS + " ".join(tokens))         # uncommitted edits, gone
+            continue
+        if head == "rsync" and any(t.startswith(("--del", "--remove-source-files")) for t in tokens):
+            losses.append(_ALWAYS + " ".join(tokens))         # what it removes depends on both trees
+            continue
+        if head == "truncate":
+            targets, skip = [], False
+            for t in tokens[1:]:
+                if skip:
+                    skip = False
+                elif t in ("-s", "-r", "--size", "--reference"):
+                    skip = True                               # the option's value, not a file
+                elif not t.startswith("-"):
+                    targets.append(t)
+            if not targets:
+                losses.append(_ALWAYS + " ".join(tokens))
+                continue
+            _record(targets)
             continue
         if head == "git" and "reset" in tokens[1:4] and "--hard" in tokens:
             losses.append(_ALWAYS + "git reset --hard")       # throws away every uncommitted edit
@@ -918,6 +979,13 @@ def _make_ask_user_tool():
     return ask_user
 
 
+# Strict mode -- the default, auto mode off -- gates on the marker lists
+# above and does NOT run the loss-of-work check auto mode uses. So the
+# stricter-sounding mode is the weaker one for ordinary deletes: `rm -r src`
+# (no -f), `rm src/app.ts`, `git reset --hard`, `git clean -fdx` and the
+# A24 forms run unasked here and ask in auto mode (2026-10-22 audit, A25).
+# Known and left as it is: the markers are a footgun net, not a list to
+# grow, and the sandbox is the boundary.
 INTERRUPT_ON = {
     "ask_user": {
         "allowed_decisions": ["respond"],
