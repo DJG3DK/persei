@@ -56,3 +56,26 @@ export function registerServiceWorker(): void {
     });
   });
 }
+
+/** The active worker's registration, or a clear error when there is none.
+ *
+ * `navigator.serviceWorker.ready` never settles on a page no worker
+ * registered -- `vite dev`, a browser that refused the registration -- so
+ * "Enable notifications" sat on its busy state forever until 2026-10-22
+ * (audit U29). No registration at all fails at once; one still installing
+ * gets `timeoutMs` to activate. */
+export async function serviceWorkerReady(timeoutMs = 10_000): Promise<ServiceWorkerRegistration> {
+  const sw = navigator.serviceWorker;
+  if (!(await sw.getRegistration())) {
+    throw new Error("No service worker is running on this page, so it cannot receive notifications. Reload the console and try again.");
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("The service worker did not start. Reload the console and try again.")), timeoutMs);
+  });
+  try {
+    return await Promise.race([sw.ready, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

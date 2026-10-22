@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getPushKey, subscribePush, testPush, unsubscribePush } from "../api";
+import { serviceWorkerReady } from "../registerServiceWorker";
 import "./PushPanel.css";
 
 /* Turning on notifications for THIS device.
@@ -67,7 +68,7 @@ export function PushPanel() {
   const refresh = useCallback(async () => {
     if (!supported) return;
     try {
-      const reg = await navigator.serviceWorker.ready;
+      const reg = await serviceWorkerReady();
       setSubscribedHere(Boolean(await reg.pushManager.getSubscription()));
     } catch {
       setSubscribedHere(false);
@@ -101,7 +102,7 @@ export function PushPanel() {
         return;
       }
       const { public_key } = await getPushKey();
-      const reg = await navigator.serviceWorker.ready;
+      const reg = await serviceWorkerReady();
       const sub = await reg.pushManager.subscribe({
         // Web push has no "silent" mode any browser trusts: userVisibleOnly
         // false is rejected outright by Chrome.
@@ -130,7 +131,7 @@ export function PushPanel() {
     setError(null);
     setNote(null);
     try {
-      const reg = await navigator.serviceWorker.ready;
+      const reg = await serviceWorkerReady();
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
         // Tell the server first: if unsubscribe() succeeds and the POST then
