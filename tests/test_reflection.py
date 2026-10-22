@@ -165,7 +165,9 @@ def test_consolidation_is_told_which_reflections_are_proven():
     from agent import consolidation
     p = consolidation.CONSOLIDATION_SYSTEM_PROMPT
     assert "only a task that went on" in p and "unproven guess" in p
-    assert 'reflections={e[\'reflections\']!r}' in inspect.getsource(consolidation.run_consolidation)
+    line = consolidation._episode_line({"task_id": "t", "goal": "g", "outcome": "shipped",
+                                        "cost_usd": 0.5, "iteration_count": 2, "reflections": [GOOD]})
+    assert f"reflections={[GOOD]!r}" in line
 
 
 def test_the_setting_exists_and_defaults_on():
