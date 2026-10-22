@@ -299,13 +299,18 @@ _ASSETS = {
 }
 _RELEASE_DOWNLOADS = "https://github.com/DJG3DK/persei/releases/download/"
 _DOWNLOAD_TTL_S = 600
-_download_cache: dict[str, tuple[float, str]] = {}
+# A miss -- GitHub down, rate-limited, or a release without this file -- is
+# cached too, for a minute. Until 2026-10-22 (audit S6) only a hit was, so
+# while GitHub was failing every download paid another 8 s call against the
+# unauthenticated 60-an-hour limit, which kept it failing.
+_DOWNLOAD_MISS_TTL_S = 60
+_download_cache: dict[str, tuple[float, str | None]] = {}
 
 
 async def _latest_asset(kind: str) -> str | None:
     now = time.monotonic()
     hit = _download_cache.get(kind)
-    if hit and now - hit[0] < _DOWNLOAD_TTL_S:
+    if hit and now - hit[0] < (_DOWNLOAD_TTL_S if hit[1] else _DOWNLOAD_MISS_TTL_S):
         return hit[1]
     try:
         async with httpx.AsyncClient(timeout=8, headers={"Accept": "application/vnd.github+json"}) as client:
@@ -314,12 +319,14 @@ async def _latest_asset(kind: str) -> str | None:
             release = r.json()
     except Exception as e:  # noqa: BLE001 -- the release page is a fine answer too
         logger.warning("download: could not read the latest release: %s", type(e).__name__)
+        _download_cache[kind] = (now, None)
         return None
     for asset in release.get("assets") or []:
         url = asset.get("browser_download_url") or ""
         if _ASSETS[kind].match(asset.get("name") or "") and url.startswith(_RELEASE_DOWNLOADS):
             _download_cache[kind] = (now, url)
             return url
+    _download_cache[kind] = (now, None)
     return None
 
 

@@ -401,6 +401,23 @@ def test_the_windows_download_falls_back_to_the_release_page(monkeypatch):
     assert r.headers["location"] == newsletter.RELEASES_PAGE, "only this repository's release URLs"
 
 
+def test_a_failed_or_empty_lookup_is_cached_for_a_minute(monkeypatch):
+    """Only a hit was cached, so while GitHub failed every download paid
+    another 8 s call against its 60-an-hour limit (2026-10-22, audit S6)."""
+    for fake in (_FakeGitHub(fail=True), _FakeGitHub({"assets": []})):
+        newsletter.reset_download_cache()
+        monkeypatch.setattr(newsletter.httpx, "AsyncClient", fake)
+        with TestClient(newsletter.app) as c:
+            _register(c)
+            for _ in range(3):
+                assert c.get("/download/windows", follow_redirects=False).headers["location"] == newsletter.RELEASES_PAGE
+            assert fake.calls == 1
+            stamp, url = newsletter._download_cache["windows"]
+            newsletter._download_cache["windows"] = (stamp - newsletter._DOWNLOAD_MISS_TTL_S - 1, url)
+            c.get("/download/windows", follow_redirects=False)
+            assert fake.calls == 2, "a miss is retried after a minute, not kept for ten"
+
+
 def test_the_linux_downloads_follow_the_latest_full_release(monkeypatch):
     base = "https://github.com/DJG3DK/persei/releases/download/v0.9.2/"
     newsletter.reset_download_cache()
