@@ -23,10 +23,14 @@ check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 # Stubs on PATH. Each records its arguments; setpriv and the entrypoints'
 # real targets (docker-entrypoint.sh, uvicorn, node) just record and stop.
 mkdir -p "$T/bin"
-for stub in docker-entrypoint.sh uvicorn setpriv chown useradd groupadd docker psql node; do
+for stub in docker-entrypoint.sh uvicorn setpriv chown useradd groupadd docker node; do
     printf '#!/bin/sh\necho "%s $*" >> "%s/calls"\n' "$stub" "$T" > "$T/bin/$stub"
     chmod +x "$T/bin/$stub"
 done
+# psql records its stdin too: that is where the SQL goes (init-secrets.sh
+# --rotate; psql does not interpolate variables in -c).
+printf '#!/bin/sh\necho "psql $* <<$(cat)" >> "%s/calls"\n' "$T" > "$T/bin/psql"
+chmod +x "$T/bin/psql"
 # The entrypoints drop privileges only when they ARE root (`id -u`); the
 # suite runs unprivileged on CI, so the question is answered as root here
 # and the drop itself is a stubbed setpriv. Everything else id is asked
@@ -81,9 +85,10 @@ check "a changed POSTGRES_PASSWORD after first init is not written for the agent
 check "and the log says how to rotate" 'grep -q -- "--rotate" "$T/err"'
 run_init POSTGRES_PASSWORD=mine
 check "the same value as stored is not a rotation" '! grep -q -- "--rotate" "$T/err"'
-env -i PATH="$PATH" TEKTONIX_PG_SECRET_DIR="$T/v/pg" TEKTONIX_ROUTER_KEY_DIR="$T/v/rk" POSTGRES_PASSWORD=changed-later POSTGRES_DB=tektonix sh "$INIT" --rotate >/dev/null 2>"$T/err"
+env -i PATH="$PATH" TEKTONIX_PG_SECRET_DIR="$T/v/pg" TEKTONIX_ROUTER_KEY_DIR="$T/v/rk" POSTGRES_PASSWORD=changed-later POSTGRES_DB=tektonix sh "$INIT" --rotate </dev/null >/dev/null 2>"$T/err"
+want="<<ALTER USER \"agent\" PASSWORD :'pw'"
 check "--rotate alters the role with the value as a psql variable and rewrites the file" \
-    '[[ "$(cat "$T/v/pg/postgres_password")" == changed-later ]] && grep -q "^psql .*-v pw=changed-later .*ALTER USER" "$T/calls" && ! grep -q "PASSWORD .changed-later" "$T/calls"'
+    '[[ "$(cat "$T/v/pg/postgres_password")" == changed-later ]] && grep -q "^psql .*-v pw=changed-later " "$T/calls" && grep -qF -- "$want" "$T/calls" && ! grep -q "PASSWORD .changed-later" "$T/calls"'
 
 reset
 run_init MODEL_ROUTER_KEY=sk-local-dev

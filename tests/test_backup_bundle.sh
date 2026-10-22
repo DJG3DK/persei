@@ -66,5 +66,34 @@ rm -f "$T/host/.env"
 out="$(AGENT_HOME="$T/host" "$SCRIPT" "$T/host/backups" 2>&1)"; rc=$?
 check "without a DSN it says so and stops" '[[ $rc != 0 && "$out" == *"LANGGRAPH_PG_DSN"* ]]'
 
+# I26, 2026-10-22: the documented restore extracted the router key through
+# the agent, which mounts it read-only, and never gave a new machine's
+# database the restored password. The block in docs/backup.md is run as
+# written, with docker recording each call and the files it was fed.
+echo "the bundle restore in docs/backup.md"
+mkdir -p "$T/restore/backups" "$T/restore/bin"
+block="$(awk '/^\*\*Restoring the bundle\*\*/{on=1} on && /^```bash$/{grab=1; next} grab && /^```$/{exit} grab' docs/backup.md)"
+check "the block is there" '[[ "$block" == *"docker compose"* ]]'
+printf 'dump' > "$T/restore/backups/agent-20260101T000000Z.dump"
+printf 'tgz' > "$T/restore/backups/agent-20260101T000000Z-volumes.tgz"
+cat > "$T/restore/bin/docker" <<'EOF'
+#!/bin/bash
+if [ -t 0 ]; then fed=; else fed="$(cat)"; fi
+echo "docker $* <<${fed}" >> "$CALLS"
+EOF
+printf '#!/bin/sh\necho "curl $*" >> "$CALLS"\necho {}\n' > "$T/restore/bin/curl"
+chmod +x "$T/restore/bin/"*
+: > "$CALLS"
+(cd "$T/restore" && PATH="$T/restore/bin:$PATH" bash -euo pipefail -c "${block//<stamp>/20260101T000000Z}" </dev/null >/dev/null 2>&1); rc=$?
+check "it runs to the end" '[[ $rc == 0 ]] && grep -q "^curl " "$CALLS"'
+check "the router stops with the writers, so it reads the restored key" \
+    'grep -q "^docker compose stop .*\brouter\b" "$CALLS"'
+check "the agent restores only its own volumes, without building first" \
+    'grep "entrypoint tar agent" "$CALLS" | grep -q -- "--pull never" && ! grep "entrypoint tar agent" "$CALLS" | grep -q "run/tektonix"'
+check "both secrets go in through postgres, which mounts them writable" \
+    'grep -q "^docker compose exec -T postgres tar xzf - -C / run/tektonix-pg run/tektonix-router <<tgz" "$CALLS"'
+check "then the role takes the restored password, after the file is back" \
+    '[[ $(grep -n "run/tektonix-pg run/tektonix-router" "$CALLS" | cut -d: -f1) -lt $(grep -n "init-secrets.sh --rotate" "$CALLS" | cut -d: -f1) ]] && grep "init-secrets.sh --rotate" "$CALLS" | grep -q "cat /run/tektonix-pg/postgres_password"'
+
 echo "$pass passed, $fail failed"
 [[ $fail == 0 ]]

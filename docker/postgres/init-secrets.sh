@@ -52,9 +52,11 @@ write() {   # dir name value
 if [ "${1:-}" = "--rotate" ]; then
     : "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env and recreate the postgres container first}"
     # Over the socket, as the bootstrap superuser; the value goes in as a
-    # psql variable, never into the SQL text.
-    psql -v ON_ERROR_STOP=1 -v pw="$POSTGRES_PASSWORD" -U "${POSTGRES_USER:-agent}" -d "${POSTGRES_DB:-postgres}" \
-        -qc "ALTER USER \"${POSTGRES_USER:-agent}\" PASSWORD :'pw'"
+    # psql variable, never into the SQL text. On stdin: psql does not
+    # interpolate variables in -c, so until 2026-10-22 this sent the literal
+    # :'pw' and every rotation failed with a syntax error.
+    printf '%s\n' "ALTER USER \"${POSTGRES_USER:-agent}\" PASSWORD :'pw'" \
+        | psql -v ON_ERROR_STOP=1 -v pw="$POSTGRES_PASSWORD" -U "${POSTGRES_USER:-agent}" -d "${POSTGRES_DB:-postgres}" -q
     write "$pgdir" postgres_password "$POSTGRES_PASSWORD"
     echo "[init-secrets] rotated the database password; restart the agent to pick it up"
     exit 0

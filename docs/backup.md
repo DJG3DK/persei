@@ -170,11 +170,13 @@ The projects themselves are in `PROJECTS_DIR` on the host and are not in
 either file. The same nightly line works, with `--bundle`.
 
 **Restoring the bundle**, with the agent stopped and the database restored
-beside the old one:
+beside the old one. On a new machine, `docker compose up -d` once first, so
+the volumes and an empty database exist.
 
 ```bash
-# 1. stop everything that writes; postgres stays up
-docker compose stop agent agent-review commit-reviewer
+# 1. stop everything that writes, and the router, which reads its key at
+#    start; postgres stays up
+docker compose stop agent agent-review commit-reviewer router
 
 # 2. a fresh database next to the old one, then the dump into it. If the
 #    dump lists an EXTENSION (pg_restore --list), create it first as in
@@ -183,13 +185,22 @@ docker compose exec -T postgres createdb -U agent tektonix_restored
 docker compose exec -T postgres pg_restore -U agent -d tektonix_restored \
     --no-owner --exit-on-error < backups/agent-<stamp>.dump
 
-# 3. the volumes, from the tarball: the agent's own, then the database
-#    password into the postgres container (the agent mounts it read-only)
-docker compose run --rm -T --no-deps --entrypoint tar agent xzf - -C / \
-    app/data app/router-config app/shared run/tektonix-router < backups/agent-<stamp>-volumes.tgz
-docker compose exec -T postgres tar xzf - -C / run/tektonix-pg < backups/agent-<stamp>-volumes.tgz
+# 3. the volumes, from the tarball: the agent's own through the agent, the
+#    two secrets through postgres (the agent mounts them read-only).
+#    --pull never: the agent's pull_policy is build, and `run` would
+#    otherwise rebuild it first (or fail, in the desktop app's stack)
+docker compose run --rm -T --no-deps --pull never --entrypoint tar agent xzf - -C / \
+    app/data app/router-config app/shared < backups/agent-<stamp>-volumes.tgz
+docker compose exec -T postgres tar xzf - -C / \
+    run/tektonix-pg run/tektonix-router < backups/agent-<stamp>-volumes.tgz
 
-# 4. point the agent at the restored database and start it
+# 4. the database role takes the restored password. A new machine's
+#    database was initialised with a password of its own, which the file
+#    from step 3 just replaced; on the same machine this changes nothing.
+docker compose exec -T postgres sh -c \
+    'POSTGRES_PASSWORD="$(cat /run/tektonix-pg/postgres_password)" sh /tektonix/init-secrets.sh --rotate'
+
+# 5. point the agent at the restored database and start it
 #    (.env: POSTGRES_DB=tektonix_restored), then check it sees the data
 docker compose up -d
 curl -s 127.0.0.1:8100/api/health | python3 -m json.tool
@@ -198,6 +209,40 @@ curl -s 127.0.0.1:8100/api/health | python3 -m json.tool
 Restoring the password file matters even when the database was never lost:
 `pgdata` outlives a lost `pgsecret`, and then the agent has no way to open
 it. The checks in "After a restore" apply here too.
+`tests/test_backup_bundle.sh` runs this block, with docker stubbed, on
+every CI run.
+
+---
+
+## The desktop app
+
+The app runs the same bundle (compose project `tektonix`) from a directory
+of its own, which holds its compose file and its `.env` with your
+OpenRouter key and settings:
+
+| | |
+|---|---|
+| Linux | `~/.local/share/io.tektonix.desktop/stack` |
+| Windows | `%LOCALAPPDATA%\io.tektonix.desktop\stack` |
+
+Everything above for the bundle applies, run from that directory. With the
+stack started, from a checkout of this repository (on Windows, in Git Bash
+or WSL):
+
+```bash
+AGENT_HOME="$HOME/.local/share/io.tektonix.desktop/stack" \
+    scripts/backup.sh --bundle ~/persei-backups
+```
+
+Keep a copy of that directory's `.env` beside the two files: the dump and
+the tarball do not hold the OpenRouter key. To restore onto a new machine,
+install the app and finish its setup once, so the stack and its volumes
+exist; Stop it from the panel, put the `.env` back, start the database
+alone with `docker compose up -d --no-build postgres`, and follow
+"Restoring the bundle" from that directory through step 4. Step 5 is Start
+in the panel: the app's images are pulled, not built, and a plain
+`docker compose up` would try to build them. The projects folder is yours
+on disk, as in the bundle.
 
 ---
 
