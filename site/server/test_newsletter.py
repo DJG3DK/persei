@@ -545,6 +545,20 @@ def test_a_forged_or_unknown_cookie_does_not_count():
     assert c.get("/get/nonsense", follow_redirects=False).status_code == 303
 
 
+def test_the_env_example_names_every_setting_the_service_reads():
+    """DOWNLOAD_COOKIE_SECRET was missing, so a deploy from the example had a
+    random key per process and every pm2 restart dropped every cookie
+    (2026-10-22, audit S5). LANGGRAPH_PG_DSN is the agent's own fallback."""
+    import re
+
+    here = Path(__file__).resolve().parent
+    read = set(re.findall(r'os\.environ\.get\("([A-Z_]+)"\)', (here / "newsletter.py").read_text()))
+    example = (here / ".env.example").read_text()
+    missing = sorted(k for k in read - {"LANGGRAPH_PG_DSN"} if not re.search(rf"^{k}=", example, re.M))
+    assert "DOWNLOAD_COOKIE_SECRET" in read
+    assert missing == []
+
+
 # ── What the privacy page promises (2026-10-22, audit S3) ────────────────────
 
 PRIVACY_PAGE = Path(__file__).resolve().parent.parent / "public" / "privacy" / "index.html"
