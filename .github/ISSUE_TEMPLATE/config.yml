@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Questions, help and feature ideas
+    url: https://t.me/+CWcRkoSK65kzODQx
+    about: Ask in the Telegram group — quicker than an issue for anything that isn't a bug.
   - name: Security vulnerability
     url: https://github.com/DJG3DK/persei/security/advisories/new
     about: Report privately — please do not open a public issue.

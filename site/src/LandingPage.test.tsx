@@ -69,10 +69,11 @@ describe("LandingPage", () => {
     expect(document.body.textContent).toMatch(/never sold, never shared/i);
   });
 
-  it("links off-site only ever into that one repo", () => {
+  it("links off-site only ever into that one repo, or the project's own Telegram group", () => {
     // The point is that this page never sends anyone somewhere else, not that
     // every link is the repo root -- the download goes to /releases/latest.
     // Anchored with the trailing slash so a lookalike host cannot satisfy it.
+    // The Telegram group (2026-10-22) is the one other place, matched exactly.
     render(<LandingPage />);
     const external = screen
       .getAllByRole("link")
@@ -83,7 +84,8 @@ describe("LandingPage", () => {
       const href = a.getAttribute("href") ?? "";
       expect(
         href === "https://github.com/DJG3DK/persei" ||
-          href.startsWith("https://github.com/DJG3DK/persei/"),
+          href.startsWith("https://github.com/DJG3DK/persei/") ||
+          href === "https://t.me/+CWcRkoSK65kzODQx",
       ).toBe(true);
     });
   });
@@ -183,5 +185,15 @@ describe("LandingPage — 0.9 install paths", () => {
     expect(text).toMatch(/linux, as a bundle/i);
     expect(text).toMatch(/mac:\s*not yet/i);
     expect(text).not.toMatch(/macos as it does on linux/i);
+  });
+
+  it("points people at the Telegram group for help and ideas", () => {
+    render(<LandingPage />);
+    const links = screen.getAllByRole("link", { name: /telegram/i });
+    expect(links.length).toBeGreaterThanOrEqual(3);
+    links.forEach((a) => {
+      expect(a).toHaveAttribute("href", "https://t.me/+CWcRkoSK65kzODQx");
+      expect(a).toHaveAttribute("rel", expect.stringContaining("noopener"));
+    });
   });
 });

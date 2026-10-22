@@ -27,6 +27,13 @@ reviewed again. The limit is a set of Postgres advisory locks (`agent/graph.py`,
 rather than anything in the process, because it is a property of the project: a second worker or an
 overlapping restart sees the same slots, and Postgres drops a claim when its connection closes.
 
+## Community
+
+Questions, help with an install, or an idea for what it should do next: join the
+**[Telegram group](https://t.me/+CWcRkoSK65kzODQx)**. Bugs are best as a
+[GitHub issue](https://github.com/DJG3DK/persei/issues), and security problems go through a
+[private advisory](https://github.com/DJG3DK/persei/security/advisories/new), never in public.
+
 ## Screenshots
 
 <table>

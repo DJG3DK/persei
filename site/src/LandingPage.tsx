@@ -20,11 +20,22 @@ const SUBSCRIBE_URL = "/newsletter/subscribe";
 
 // Who the newsletter and this page come from.
 const OWNER_EMAIL = "danny@perseiagent.ai";
+// The Telegram group: support, questions and feature requests (2026-10-22).
+const TELEGRAM = "https://t.me/+CWcRkoSK65kzODQx";
 
 function GitHubMark() {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" width="15" height="15" fill="currentColor">
       <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+    </svg>
+  );
+}
+
+/* A paper plane, for the Telegram group. Decorative, like GitHubMark. */
+function TelegramMark() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" width="15" height="15" fill="currentColor">
+      <path d="M15.4 1.6 0.9 7.2c-.6.2-.6 1.1 0 1.3l3.5 1.2 1.3 4.2c.2.5.8.7 1.2.3l2-1.8 3.6 2.6c.5.3 1.1.1 1.2-.5l2.4-11.8c.1-.7-.5-1.3-1.1-1.1ZM6.2 10l-.4 3-1-3.4 7.9-5.6Z" />
     </svg>
   );
 }
@@ -262,6 +273,11 @@ export function LandingPage() {
             <a href="#install">Install</a>
           </nav>
           <div className="lp-nav-actions">
+            <a className="lp-ghost" href={TELEGRAM} target="_blank" rel="noopener noreferrer"
+               aria-label="Telegram group">
+              <TelegramMark />
+              <span>Telegram</span>
+            </a>
             <a className="lp-ghost" href={REPO} target="_blank" rel="noopener noreferrer">
               <GitHubMark />
               <span>GitHub</span>
@@ -598,6 +614,25 @@ docker compose up -d`}</code></pre>
             handler, no JavaScript -- the browser posts it and follows the
             redirect the server answers with, which is what keeps this page
             static. site/server/newsletter.py is the other end. */}
+        <section className="lp-section" id="community">
+          <h2 className="lp-h2">Questions, ideas, help</h2>
+          <p className="lp-sub">
+            There&rsquo;s a Telegram group for Persei. Ask how something works, get help when an
+            install goes sideways, or tell me what it should do next. I read everything in there,
+            and feature requests that come up more than once tend to get built.
+          </p>
+          <div className="lp-cta">
+            <a className="lp-btn lp-btn-primary" href={TELEGRAM} target="_blank" rel="noopener noreferrer">
+              <TelegramMark />
+              Join the Telegram group
+            </a>
+            <a className="lp-btn lp-btn-quiet" href={`${REPO}/issues`} target="_blank" rel="noopener noreferrer">
+              <GitHubMark />
+              Report a bug on GitHub
+            </a>
+          </div>
+        </section>
+
         <section className="lp-section lp-news" id="newsletter">
           <h2 className="lp-h2">What changed, and what&rsquo;s next</h2>
           <p className="lp-sub">
@@ -658,6 +693,10 @@ docker compose up -d`}</code></pre>
           use. Built and maintained by me, Danny,{" "}
           <a href={`mailto:${OWNER_EMAIL}`}>{OWNER_EMAIL}</a>.
         </p>
+        <a href={TELEGRAM} target="_blank" rel="noopener noreferrer">
+          <TelegramMark />
+          Telegram
+        </a>
         <a href={REPO} target="_blank" rel="noopener noreferrer">
           <GitHubMark />
           github.com/DJG3DK/persei
