@@ -197,8 +197,14 @@ pub fn write_prefs(app: &AppHandle, prefs: &Prefs) -> Result<Prefs, String> {
 /// old file, not a torn one. A torn prefs.json read as the defaults, which
 /// turned automatic updates back on. Says whether anything was written; an
 /// unchanged file is left alone.
+///
+/// Only this account may read them: the .env holds the OpenRouter key, and
+/// under the default umask it was 0644, readable by every account on the
+/// machine (2026-10-22). Written 0600 from the start, and an older file is
+/// narrowed even when its content is unchanged.
 pub fn write_atomic(path: &Path, content: &[u8]) -> Result<bool, String> {
     if std::fs::read(path).is_ok_and(|old| old == content) {
+        owner_only(path)?;
         return Ok(false);
     }
     let name = path
@@ -206,10 +212,43 @@ pub fn write_atomic(path: &Path, content: &[u8]) -> Result<bool, String> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let tmp = path.with_file_name(format!("{name}.tmp"));
-    std::fs::write(&tmp, content).map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
+    // A leftover temp file would keep its own mode: the mode below applies
+    // only to a file this call creates.
+    let _ = std::fs::remove_file(&tmp);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let written = options.open(&tmp).and_then(|mut f| {
+        use std::io::Write;
+        f.write_all(content)
+    });
+    written.map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path)
         .map_err(|e| format!("could not replace {}: {e}", path.display()))?;
     Ok(true)
+}
+
+#[cfg(unix)]
+fn owner_only(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path)
+        .map_err(|e| e.to_string())?
+        .permissions()
+        .mode();
+    if mode & 0o077 != 0 {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode & 0o700))
+            .map_err(|e| format!("could not restrict {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn owner_only(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 #[derive(Serialize, Clone)]
@@ -1458,6 +1497,16 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(left, vec!["prefs.json"], "no temp file stays behind");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode();
+            assert_eq!(mode(&path) & 0o077, 0, "the .env holds the OpenRouter key");
+            // A file from before, world-readable, with nothing to change.
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(!write_atomic(&path, b"two").unwrap());
+            assert_eq!(mode(&path) & 0o777, 0o600);
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
