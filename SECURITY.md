@@ -329,6 +329,14 @@ Treat an alert link like the alert: it is for the person it was sent to.
   authentication — [INSTALL.md §3a](INSTALL.md#3a-reaching-it-from-another-machine)
   covers all three. The app has its own login and TOTP, but it was designed to
   sit behind something, not to be the perimeter.
+- **Pages behind `/api/auth/admin-check` share the console's origin.** The
+  session cookie is host-only, so a reverse proxy's `auth_request` against
+  that route works only for pages on the console's own host, and every script
+  on those pages runs with the viewing admin's session: it can call every
+  admin API. Serve only pages you trust there, and add
+  `Content-Security-Policy: sandbox` to their responses (in nginx,
+  `add_header Content-Security-Policy "sandbox" always;` in that `location`),
+  which gives them an opaque origin of their own.
 - **Keep `AGENT_PROJECT_ROOTS` narrow.** Onboarding grants an agent write
   access to whatever it points at.
 - **Treat the review gate as load-bearing.** `Final merge review` and the

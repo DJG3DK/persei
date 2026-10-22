@@ -268,7 +268,13 @@ async def admin_check(user: User = Depends(auth.require_full_auth)):
     """204 for a signed-in admin, 401 or 403 otherwise, and nothing more.
     For a reverse proxy's auth_request in front of pages the agent does not
     serve itself (an operator's own report, say), so they share the
-    dashboard's sign-in instead of a password of their own."""
+    dashboard's sign-in instead of a password of their own.
+
+    The session cookie is host-only, so this works only for pages served on
+    the console's own host -- which makes them same-origin with it: any
+    script on such a page can call every admin API as the admin viewing
+    it. SECURITY.md says to serve them with `Content-Security-Policy:
+    sandbox` (audit B32)."""
     auth.require_admin(user)
     return Response(status_code=204)
 
