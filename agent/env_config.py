@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -200,6 +201,19 @@ class InvalidValueError(Exception):
     pass
 
 
+def _breaks_a_line(value: str) -> bool:
+    """Whether some reader of a .env could see more than one line in this
+    value. `\n`, `\r` and NUL were the M-3 guard, and str.splitlines(), the
+    router's pm2 loader and others also break on \x0b, \x0c, \x1c-\x1e,
+    \x85, U+2028 and U+2029: one of those carried
+    MODEL_ROUTER_ALLOW_UNAUTHENTICATED=1 into the router's .env (audit B28,
+    2026-10-22). Any control or line/paragraph separator is refused; a tab
+    is the one control character a value may hold."""
+    if len(value.splitlines()) > 1:
+        return True
+    return any(c != "\t" and unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in value)
+
+
 def _format_value(value: str) -> str:
     """Render a value for a .env line. audit M-3: reject embedded newlines /
     carriage returns / NULs (which previously let a managed, non-secret key's
@@ -208,8 +222,8 @@ def _format_value(value: str) -> str:
     last occurrence). Quote and escape anything with shell/dotenv-significant
     characters so the written line round-trips to exactly this value.
     """
-    if any(c in value for c in ("\n", "\r", "\x00")):
-        raise InvalidValueError("value may not contain newlines or NUL")
+    if _breaks_a_line(value):
+        raise InvalidValueError("value may not contain line breaks or control characters")
     needs_quote = value == "" or any(c in value for c in (' ', '\t', '#', '"', "'", '=', '$', '`', '\\'))
     if not needs_quote:
         return value
@@ -236,7 +250,12 @@ def _write_env(path: Path, updates: dict[str, str]) -> None:
         original = ""
         existed = False
 
-    lines = original.splitlines()
+    # Split on "\n" alone: splitlines() also splits on the separators
+    # _breaks_a_line refuses, so a file holding one would be rewritten with
+    # a new line there.
+    lines = original.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
     seen: set[str] = set()
     for i, line in enumerate(lines):
         stripped = line.strip()
@@ -291,8 +310,8 @@ def set_keys(updates: dict[str, str]) -> dict:
     # audit M-3: validate every value BEFORE writing any file, so one bad value
     # can't leave a partial multi-file update behind.
     for k, v in updates.items():
-        if any(c in v for c in ("\n", "\r", "\x00")):
-            raise InvalidValueError(f"value for {k} may not contain newlines or NUL")
+        if _breaks_a_line(v):
+            raise InvalidValueError(f"value for {k} may not contain line breaks or control characters")
 
     by_file: dict[Path, dict[str, str]] = {}
     restarts: set[str] = set()

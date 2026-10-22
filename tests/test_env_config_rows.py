@@ -92,3 +92,24 @@ def test_a_duplicate_id_in_the_table_is_refused_rather_than_shadowed(monkeypatch
     monkeypatch.setattr(ec, "MANAGED_KEYS", dup)
     with pytest.raises(RuntimeError, match="one id"):
         ec.set_keys({"OPENROUTER_API_KEY": "x"})
+
+
+@pytest.mark.parametrize("sep", ["\n", "\r", "\x00", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85",
+                                 "\u2028", "\u2029", "\x1b"])
+def test_every_line_break_is_refused_before_anything_is_written(files, sep):
+    """B28 (2026-10-22): the guard refused \\n, \\r and NUL; the others
+    survived it, and the router's pm2 loader (line by line) read
+    MODEL_ROUTER_ALLOW_UNAUTHENTICATED=1 from the next "line"."""
+    router, agent = files
+    with pytest.raises(ec.InvalidValueError):
+        ec.set_keys({"MODEL_ROUTER_KEY": f"k{sep}MODEL_ROUTER_ALLOW_UNAUTHENTICATED=1"})
+    with pytest.raises(ec.InvalidValueError):
+        ec._format_value(f"k{sep}x")
+    assert router.read_text() == "MODEL_ROUTER_KEY=router-old\n"
+
+
+def test_a_tab_is_still_a_value_and_a_file_is_split_on_newlines_only(files):
+    router, _ = files
+    router.write_text("# keep\u2028this comment whole\nMODEL_ROUTER_KEY=old\n")
+    ec.set_keys({"MODEL_ROUTER_KEY": "a\tb"})
+    assert router.read_text() == '# keep\u2028this comment whole\nMODEL_ROUTER_KEY="a\tb"\n'
