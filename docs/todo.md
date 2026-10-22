@@ -602,7 +602,6 @@ are fixed. These did not, and are cheap to lose track of.
 ## Left open by the 2026-09-29 audit
 
 - R3: a review of a foreign live install (the Windows bundle) runs `npm ci` in the sandbox on every review and every baseline, with no cache. A reviewer-owned install cache keyed by the lockfile hash, mounted read-only into the check container and accepted as a third mount root by the agent, would make it one install per lockfile change.
-- B15: the rebase recursion in verify_and_ship drops the outer execution log; the fix is `{**inner, "execution_log": [*logged, deploy_entry, *inner.get("execution_log", [])]}`.
 - A4: the empty-reply quiet retry runs on the coder seat for planner turns and pays twice; `_attempts()` should skip the quiet attempt when the request's model already has reasoning off, and planner turns should pick the planner's quiet seat.
 - B20: `review_gate.py` still interpolates `base` raw in two shell strings (the loader now refuses a non-branch value); quote them with `shlex.quote` like `tools/git.py`.
 - In the bundle `/app/keys` (deploy keys, keys/vapid.json) is not a volume and is lost when the container is recreated.
