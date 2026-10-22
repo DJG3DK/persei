@@ -49,7 +49,7 @@ openai==3.19.2
 orjson==3.12.0
 ormsgpack==1.12.2
 packaging==26.3
-pillow==12.3.0
+pillow==13.0.0
 playwright==1.63.0
 pluggy==1.6.0
 psycopg==3.3.6
