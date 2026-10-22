@@ -50,6 +50,7 @@ from agent.deep_agent import (
     route_local_path,
     episodes_namespace,
 )
+from agent.memory_sections import SECTIONS_DIR
 from agent.store_paging import all_items
 from agent.tools.agent_tools import make_agent_tools
 
@@ -144,6 +145,20 @@ async def _failures_on(backend: StoreBackend, batch_end: str) -> int:
     except (json.JSONDecodeError, TypeError):
         return 0
     return int(record.get("count") or 0) if record.get("batch") == batch_end else 0
+
+
+async def _memory_digest(store: BaseStore, repo: str) -> str:
+    """A digest of the project's memory as the store holds it: the whole
+    file and, for a split project, every section -- the layer a task's edit
+    lands on once the memory is split."""
+    import hashlib
+    sections = route_local_path("/memories/", SECTIONS_DIR)
+    ns = project_namespace(repo)(None)
+    h = hashlib.sha256()
+    for item in sorted(await all_items(store, ns), key=lambda i: i.key):
+        if tuple(item.namespace) == tuple(ns) and (item.key == MEMORY_KEY or item.key.startswith(sections)):
+            h.update(json.dumps([item.key, item.value], sort_keys=True, default=str).encode())
+    return h.hexdigest()
 
 
 async def _set_failures(backend: StoreBackend, batch_end: str | None, count: int) -> None:
@@ -282,6 +297,7 @@ async def run_consolidation(config: Config, repo: str, checkpointer, store: Base
             size += len(line) + 2
     episode_paths = batch
 
+    digest_before = await _memory_digest(store, repo)
     current_memory = await read_memory_or_empty(project_backend, MEMORY_KEY)
     episodes_text = "\n\n".join(lines)
 
@@ -351,6 +367,15 @@ async def run_consolidation(config: Config, repo: str, checkpointer, store: Base
         await _set_failures(project_backend, None, 0)
 
     memory_changed = structured.updated_memory.strip() != current_memory.strip()
+    if memory_changed and await _memory_digest(store, repo) != digest_before:
+        # The answer is a rewrite of the memory as it was read, minutes ago.
+        # A task or the operator has edited it since, and writing now would
+        # drop that edit (2026-10-22 audit, A22). The marker stays, so the
+        # next run does this batch again against the memory as it is then.
+        print(f"[consolidation] {repo}: memory changed during the run -- not written, will retry")
+        return {"episodes_reviewed": 0, "memory_changed": False, "memory_conflict": True,
+                **_history_summary(indexed),
+                "reasoning": "the memory was edited while this run was reading it; retried next run"}
     if memory_changed:
         await project_backend.awrite(MEMORY_KEY, structured.updated_memory)
         # And the section layer, for a project that has one. This job writes

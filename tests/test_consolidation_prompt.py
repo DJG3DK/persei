@@ -4,6 +4,7 @@
 goal carries a pull request's body, written by anyone -- unfenced, to a model
 whose answer becomes the project's memory and which held `bash`. A batch
 that failed was retried every run, at up to the dollar ceiling each time.
+And (A22) its answer was written over any memory edit made while it ran.
 """
 from __future__ import annotations
 
@@ -132,3 +133,48 @@ async def test_a_batch_that_keeps_failing_is_skipped(run):
     assert await _marker(store, "test-repo") == keys[-1][len(EPISODES_ROUTE):]
     assert await c._failures_on(StoreBackend(namespace=project_namespace("test-repo"), store=store),
                                 keys[-1]) == 0, "the count starts again for the next batch"
+
+
+# --- an edit made while the model is thinking (2026-10-22 audit, A22) ------
+
+def _editing_agent(seen: dict, store, repo: str, path: str):
+    class _Editing(_Agent):
+        async def ainvoke(self, payload, **kwargs):
+            backend = StoreBackend(namespace=project_namespace(repo), store=store)
+            await backend.awrite(path, "# edited by a task mid-run\n")
+            return {"structured_response": _Result("# consolidated\n")}
+    return _Editing(seen)
+
+
+async def _memory_text(store, repo: str) -> str:
+    from deepagents.backends.utils import file_data_to_string
+    result = await StoreBackend(namespace=project_namespace(repo), store=store).aread(c.MEMORY_KEY)
+    return file_data_to_string(result.file_data) if result.file_data else ""
+
+
+@pytest.mark.parametrize("edited", ["memory", "section"])
+async def test_an_edit_made_during_the_run_is_not_overwritten(run, monkeypatch, edited):
+    from agent.deep_agent import route_local_path
+    from agent.memory_sections import SECTIONS_DIR
+
+    store = InMemoryStore()
+    await StoreBackend(namespace=project_namespace("test-repo"), store=store).awrite(c.MEMORY_KEY, "# before\n")
+    await _seed(store, "test-repo", 2, "fix a bug")
+    path = c.MEMORY_KEY if edited == "memory" else route_local_path("/memories/", SECTIONS_DIR) + "conventions.md"
+    monkeypatch.setattr(c, "create_deep_agent", lambda **kw: _editing_agent(run.seen, store, "test-repo", path))
+
+    summary = await c.run_consolidation(load_config(), "test-repo", None, store)
+
+    assert summary["memory_conflict"] is True and summary["memory_changed"] is False
+    assert await _memory_text(store, "test-repo") == ("# edited by a task mid-run\n" if edited == "memory"
+                                                      else "# before\n")
+    assert await _marker(store, "test-repo") == "", "the batch is done again next run"
+
+
+async def test_an_unedited_memory_is_written(run):
+    store = InMemoryStore()
+    await StoreBackend(namespace=project_namespace("test-repo"), store=store).awrite(c.MEMORY_KEY, "# before\n")
+    await _seed(store, "test-repo", 1, "fix a bug")
+    summary = await c.run_consolidation(load_config(), "test-repo", None, store)
+    assert summary["memory_changed"] is True and "memory_conflict" not in summary
+    assert await _memory_text(store, "test-repo") == "# memory\n"
