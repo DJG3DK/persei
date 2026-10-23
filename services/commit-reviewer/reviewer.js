@@ -58,6 +58,10 @@ const {
   classifyInfrastructureFailures, baselineKey, runChecks, applyBaseline, markPreexistingFailures,
   runBuildCheck, runDatabaseCheck, runSecretScan,
 } = require('./checks');
+// What the review decides without the model: symlinks to secrets, CI edited
+// to skip its checks, tests skipped or gutted, text addressed to the
+// reviewer. See guards.js.
+const { inspectBranch } = require('./guards');
 
 // REVIEW_STATE_DIR exists for the bundle, where this service is a container
 // and its verdicts have to outlive it -- and be readable by agent-review,
@@ -553,6 +557,12 @@ async function reviewProject(project, cfg, routerKey, requested = null) {
         + `(ok=${diffResult.ok}, bytes=${(diffResult.output || '').length}); failing the review closed`);
     }
     const diff = diffResult.output;
+    // Before the model, and thrown on failure like the diff above: a review
+    // that could not run its guards must not read as one that passed them.
+    const guardFindings = await inspectBranch(cfg.live, base, sha);
+    if (guardFindings.length) {
+      log(`[${project}] guards: ${guardFindings.map((g) => `${g.guard} (${g.severity}) ${g.file}`).join('; ')}`);
+    }
 
     // Loaded before the review call (not just before the verdict/escalation
     // bookkeeping below, where this used to live) so reviewWithSonnet can see
@@ -583,7 +593,7 @@ async function reviewProject(project, cfg, routerKey, requested = null) {
     let review;
     try {
       setStep(project, 'awaiting Sonnet review');
-      review = await reviewWithSonnet(routerKey, project, commitLog, diff, checkResults, prevState, existingTestCoverage, referencedFiles, agentResponses);
+      review = await reviewWithSonnet(routerKey, project, commitLog, diff, checkResults, prevState, existingTestCoverage, referencedFiles, agentResponses, guardFindings);
     } catch (err) {
       log(`[${project}] Sonnet review call FAILED — failing closed (NEEDS_FIXES): ${err.message}`);  // audit C-3: was fabricating READY
       review = { verdict: 'NEEDS_FIXES', summary: `The automated review could not complete (${err.message}). This is NOT an approval — the qualitative review did not run.`, findings: [{ severity: 'blocking', file: undefined, issue: `Review call failed (${err.message}); no qualitative review was performed. Blocking by policy until a real review runs.` }] };
@@ -625,6 +635,20 @@ async function reviewProject(project, cfg, routerKey, requested = null) {
         + `review harness, so ${reclassified === 1 ? 'the finding that blamed this change for it was' : `the ${reclassified} findings that blamed this change for it were`} `
         + `kept as a diagnosis instead.\n\n${review.summary || ''}`;
     }
+    // The guards' answers go in after the model's and after the pre-existing
+    // reclassification, so neither can talk them out of the record: a
+    // blocking guard is NEEDS_FIXES whatever the model said, and a flag is
+    // carried on the record (`flags`) for verify_and_ship, which parks a
+    // flagged READY for the operator instead of merging it.
+    review.findings = review.findings || [];
+    for (const g of guardFindings) {
+      review.findings.push({
+        severity: g.severity === 'blocking' ? 'blocking' : 'minor',
+        file: g.file,
+        issue: `[harness: ${g.guard}${g.severity === 'flag' ? ', needs the operator\'s look before merge' : ''}] ${g.issue}`,
+      });
+    }
+    const flags = guardFindings.filter((g) => g.severity === 'flag');
     const hasBlockingFindings = (review.findings || []).some((f) => f.severity === 'blocking');
     // audit H-9: ANY omitted file forces NEEDS_FIXES in NODE -- not left to
     // the model, which the prompt could talk out of it. (An unreadable diff
@@ -674,6 +698,7 @@ async function reviewProject(project, cfg, routerKey, requested = null) {
       summary: review.summary,
       findings: review.findings,
       omittedFiles,  // audit H-9: record what the review could not see
+      flags,  // guards.js: a READY with any of these waits for the operator
       agentResponses: agentResponses.length,  // how many of the agent's answers this round was given
       // Failures keep their output. Stripping it was why nothing downstream
       // could say WHY a check failed -- the text was captured, shown to the
@@ -983,5 +1008,5 @@ module.exports = {
   branchRecord, withBranchRecord, harnessFailed, computeFileChurn, queueReview, runNextQueued, pendingReviews, sweepLeftoverWorktrees,
   liveInstallIsStale, readWorktreeFile, gatherReferencedFiles,
   extractAgentResponses, stripLeakedMarkup, REVIEW_RESPONSE_MARKER,
-  startControlServer,
+  startControlServer, reviewProject,
 };

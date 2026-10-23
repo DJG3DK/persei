@@ -1346,3 +1346,56 @@ async def test_a_reopened_task_is_not_concluded_by_the_alerts_its_first_run_clos
     monkeypatch.setattr(vs, "_verify_and_ship_gated", gated)
     state = _state(goal="Fix Dependabot security alert #6", **earlier)
     assert await vs._verify_and_ship(state, config=None) == {"reached": True}
+
+
+# ---------------------------------------------------------------------------
+# the reviewer's guard flags (services/commit-reviewer/guards.js)
+# ---------------------------------------------------------------------------
+
+def _flagged_review():
+    async def f(*a, **k):
+        return {"verdict": "READY", "summary": "reviewed", "findings": [],
+                "flags": [{"guard": "test-weakened", "severity": "flag", "file": "tests/math.test.js",
+                           "issue": "removes 2 assertion(s) from an existing test"}]}
+    return f
+
+
+def _ready_with(monkeypatch, review):
+    monkeypatch.setattr(vs, "run_all_checks", _fake_checks(all_ok=True))
+    monkeypatch.setattr(vs, "git_diff", _fake_return("diff --git a/x b/x\n+1"))
+    monkeypatch.setattr(vs, "git_commit", _fake_return({"ok": True}))
+    monkeypatch.setattr(vs, "current_sha", _fake_return("deadbeef"))
+    monkeypatch.setattr(vs, "trigger_check", _fake_return(None))
+    monkeypatch.setattr(vs, "wait_for_review", review)
+    merged = []
+
+    async def _merge(*a, **k):
+        merged.append(a)
+        return {"ok": True}
+
+    monkeypatch.setattr(vs, "merge_and_deploy", _merge)
+    return merged
+
+
+async def test_a_flagged_ready_parks_for_the_operator_even_with_merge_review_off(monkeypatch):
+    """A guard flag (a test gutted, CI edited, text addressed to the reviewer)
+    does not block, but a model's READY on it must not merge unseen."""
+    merged = _ready_with(monkeypatch, _flagged_review())
+    result = await vs._verify_and_ship(_state(require_merge_review=False), config=None)
+    assert merged == [], "a flagged READY merged without the operator"
+    assert result["pending_merge_approval"]["sha"] == "deadbeef"
+    assert "test-weakened" in result["execution_log"][-1]["detail"]
+
+
+async def test_a_flagged_ready_the_operator_approved_ships(monkeypatch):
+    merged = _ready_with(monkeypatch, _flagged_review())
+    result = await vs._verify_and_ship(_state(require_merge_review=False, merge_approved_sha="deadbeef"),
+                                       config=None)
+    assert merged, "the operator approved this exact sha"
+    assert not result.get("pending_merge_approval")
+
+
+async def test_an_unflagged_ready_with_merge_review_off_still_ships_unattended(monkeypatch):
+    merged = _ready_with(monkeypatch, _fake_review(verdict="READY"))
+    await vs._verify_and_ship(_state(require_merge_review=False), config=None)
+    assert merged
