@@ -8,7 +8,7 @@
 #
 #   scripts/package_release.sh [version]      # default: git describe
 #
-# Produces dist/tektonix-<version>.tar.gz plus a .sha256 next to it.
+# Produces dist/persei-<version>.tar.gz plus a .sha256 next to it.
 #
 # What it deliberately does NOT include: .env or any other secret, the
 # database, backups, node_modules, .git, or the review worktrees. A release is
