@@ -195,7 +195,7 @@ async def models(authorization: str | None = Header(default=None)):
     _authorise(authorization)
     t = registry.table
     return {"object": "list",
-            "data": [{"id": a, "object": "model", "owned_by": "tektonix"} for a in t.deployments]}
+            "data": [{"id": a, "object": "model", "owned_by": "persei"} for a in t.deployments]}
 
 
 @app.post("/v1/chat/completions")

@@ -51,7 +51,7 @@ def _github(live: str, name: str, description: str, token: str) -> bool:
         created = asyncio.run(github_repos.create_private_repo(token, name, description))
         public_key = github_repos.connect_origin(live, created["ssh_url"], name)
         asyncio.run(github_repos.add_deploy_key(token, created["full_name"],
-                                                f"tektonix-{name}", public_key))
+                                                f"persei-{name}", public_key))
         ok, detail = github_repos.push_initial(live, name)
         return _step("github", ok, f"{created['html_url']}: {detail}" if ok else detail)
     except (PermissionError, LookupError, ValueError, deploy_keys.DeployKeyError) as e:

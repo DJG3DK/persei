@@ -18,14 +18,11 @@ Confirmed working headless on this VPS (chromium already cached under
 ~/.cache/ms-playwright from another project's Playwright install) with the
 same --no-sandbox launch args that project already uses in production.
 
-web_search scrapes Bing's HTML results, not an API -- there's no search API
-key configured anywhere in this deployment (see .env), and DuckDuckGo's own
-HTML/lite endpoints return a hard 403 from this VPS's IP (confirmed, not a
-scraping bug on this end -- likely datacenter-IP blocking on DDG's side).
-Bing has no such block and returns real, parseable results. This is a
-scraping dependency, not a stable API contract -- if Bing changes its markup
-this will need updating. Swapping in a paid search API (Tavily/Brave/Bing
-API) later is a drop-in replacement for just this one function.
+web_search goes through agent/tools/web_search.py: the model router's
+`web-search` alias first, DuckDuckGo as a fallback, and an explicit
+"unavailable" rather than a false "no results" when both fail. It scraped
+Bing's HTML until 2026-09-30, when Bing started returning empty pages to
+this box.
 """
 
 import os
@@ -503,7 +500,7 @@ def make_planning_tools(
     @tool
     @tool_errors_to_text
     async def web_search(query: str, num_results: int = 6) -> str:
-        """Search the web (Bing) for research, documentation, competitor examples,
+        """Search the web for research, documentation, competitor examples,
         or design/UX inspiration. Returns up to `num_results` results, each with a
         title, real URL, and snippet. Use browse_page on a promising URL to read
         the full page or see what it actually looks like."""

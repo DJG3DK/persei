@@ -1772,7 +1772,7 @@ def _identity_flags(cwd: str) -> list[str]:
     with "Please tell me who you are" -- but an operator who HAS set one
     must not have it overridden by a placeholder."""
     flags: list[str] = []
-    for key, fallback in (("user.name", "Persei"), ("user.email", "tektonix@localhost")):
+    for key, fallback in (("user.name", "Persei"), ("user.email", "persei@localhost")):
         ok, out = _run_git(["config", "--get", key], cwd=cwd)
         if not ok or not out.strip():
             flags += ["-c", f"{key}={fallback}"]

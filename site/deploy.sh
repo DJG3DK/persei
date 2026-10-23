@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Build the landing page and put it where nginx serves perseiagent.ai.
 #
-# Static files only: there is no process to restart and nothing to keep warm,
-# so a deploy is a copy. Run it from site/.
+# The page itself is static files, so this part of a deploy is a copy. Run it
+# from site/. The download buttons and the newsletter form are served by
+# site/server (pm2 tektonix-newsletter): a change there needs that service
+# restarted too, with its .env exported (see site/server/README.md).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

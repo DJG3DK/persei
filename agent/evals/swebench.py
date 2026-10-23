@@ -168,7 +168,7 @@ def materialize(instance: dict, root: Path) -> dict:
     if future:
         raise SetupError(f"{image}: {len(future)} commit(s) from after the task are reachable "
                          f"(first: {future[0][:12]}) -- refusing to run")
-    for key, value in (("user.name", "Persei"), ("user.email", "agent@tektonix.local")):
+    for key, value in (("user.name", "Persei"), ("user.email", "agent@persei.local")):
         _run(["git", "config", key, value], live)
     if _run(["git", "branch", "--show-current"], live).strip() != "main":
         _run(["git", "branch", "-f", "main", head], live)

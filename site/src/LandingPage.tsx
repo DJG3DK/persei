@@ -610,10 +610,6 @@ docker compose up -d`}</code></pre>
           </div>
         </section>
 
-        {/* A plain HTML form: method, action, two fields. No fetch, no
-            handler, no JavaScript -- the browser posts it and follows the
-            redirect the server answers with, which is what keeps this page
-            static. site/server/newsletter.py is the other end. */}
         <section className="lp-section" id="community">
           <h2 className="lp-h2">Questions, ideas, help</h2>
           <p className="lp-sub">
@@ -633,6 +629,10 @@ docker compose up -d`}</code></pre>
           </div>
         </section>
 
+        {/* A plain HTML form: method, action, two fields. No fetch, no
+            handler, no JavaScript -- the browser posts it and follows the
+            redirect the server answers with, which is what keeps this page
+            static. site/server/newsletter.py is the other end. */}
         <section className="lp-section lp-news" id="newsletter">
           <h2 className="lp-h2">What changed, and what&rsquo;s next</h2>
           <p className="lp-sub">

@@ -1,5 +1,6 @@
-# The newsletter signup behind perseiagent.ai. Four packages: a web framework, a
-# Postgres driver, form parsing and the server to run it. Separate from the
+# The newsletter signup and download form behind perseiagent.ai. Five packages:
+# a web framework, a Postgres driver, form parsing, the server to run it, and
+# an HTTP client for GitHub's release API (the download links). Separate from the
 # agent's requirements.txt because this is the landing page's service and
 # neither ships with an installation.
 #
@@ -13,7 +14,7 @@ fastapi==0.141.1
 psycopg[binary,pool]==3.3.6
 python-multipart==0.0.32
 uvicorn==0.54.0
+httpx==0.28.1
 
 # Tests only.
-httpx==0.28.1
 pytest==9.1.1

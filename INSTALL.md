@@ -122,10 +122,11 @@ Admin accounts are required to set up TOTP 2FA on first login.
 By default the agent binds **`127.0.0.1:8100`** and is not reachable from
 outside the host.
 
-**The session cookie is issued with the `Secure` flag**, which makes this
-choice binary rather than a matter of taste. Browsers only send a `Secure`
-cookie over HTTPS — with one exception: `localhost` and `127.0.0.1` count as
-trustworthy origins, so plain HTTP works there. Verified in Chromium:
+**The session cookie is issued with the `Secure` flag over HTTPS**, which makes
+this choice binary rather than a matter of taste. Browsers only send a
+`Secure` cookie over HTTPS. Plain HTTP to `localhost` or `127.0.0.1` is the
+exception: there the cookie is issued without `Secure` (the desktop app's
+webviews need that), so it works too. Verified in Chromium:
 
 | How you reach it | Result |
 |---|---|

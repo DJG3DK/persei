@@ -1,10 +1,10 @@
 import type { RouterBalance, TaskMeta, TaskState, Analytics, AgentModelUsage, ModelPin, ModelCatalogEntry, ToolReliability, TraceSummary, Benchmarks, PlanningSessionMeta, PlanningLogEntry, CurrentUser } from "./types";
 
-// import.meta.env.BASE_URL is Vite's own `base` config value ("/" in dev,
-// a subpath in the production build -- see vite.config.ts). Building
-// API_BASE from it means this file doesn't need separate dev/prod branches:
-// dev's proxy and prod's nginx location both forward whatever lands on
-// {BASE_URL}api to the same backend.
+// import.meta.env.BASE_URL is Vite's own `base` config value: "/" in dev and
+// in production alike now that the console has its own host (see
+// vite.config.ts). Building API_BASE from it keeps working if a subpath ever
+// comes back: dev's proxy and prod's nginx both forward {BASE_URL}api to the
+// same backend.
 const API_BASE = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
 
 // audit H-14: a typed error for an expired/invalid session, so callers and the

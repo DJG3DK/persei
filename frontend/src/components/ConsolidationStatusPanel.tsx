@@ -55,10 +55,11 @@ export function ConsolidationStatusPanel() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => { if (!cancelled) await load(); })();
+    // The first load is deferred a tick so the effect itself sets no state;
+    // the interval is the only thing to clean up.
+    const first = setTimeout(() => { void load(); }, 0);
     const t = setInterval(() => { void load(); }, 300_000);
-    return () => { cancelled = true; clearInterval(t); };
+    return () => { clearTimeout(first); clearInterval(t); };
   }, [load]);
 
   const anyRunning = jobs.some((j) => j.running);

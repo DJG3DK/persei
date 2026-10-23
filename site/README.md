@@ -47,7 +47,7 @@ src/
   LandingPage.tsx the page
   LandingPage.css its styles
   tokens.css      this page's own copy of the Drafting palette
-  assets/         the logo and the seven screenshots
+  assets/         the logo and the screenshots
 public/           favicons, og-preview.png, robots.txt, sitemap.xml
 scripts/render.mjs  renders to static HTML, strips the JavaScript
 ```

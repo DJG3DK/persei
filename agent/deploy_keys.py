@@ -322,7 +322,7 @@ def generate_key(project: str, live: str, comment: str | None = None) -> KeyStat
         kf.unlink()
     _pub_path(project).unlink(missing_ok=True)
     ok, out = _run(["ssh-keygen", "-t", "ed25519", "-N", "", "-q",
-                    "-C", comment or f"tektonix-{project}", "-f", str(kf)])
+                    "-C", comment or f"persei-{project}", "-f", str(kf)])
     if not ok:
         raise DeployKeyError(f"ssh-keygen failed: {out}")
     os.chmod(kf, 0o600)

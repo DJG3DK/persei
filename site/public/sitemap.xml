@@ -1,14 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  One URL, deliberately.
+  The landing page and the privacy page: everything here that is a document.
 
-  The SPA answers 200 with the same shell for every path, so listing app
-  routes here would ask Google to index a set of URLs that are all in fact
-  this one page — which is the duplicate-content problem the canonical tag in
-  index.html already exists to prevent. The landing page's sections are
-  anchors (#how, #console, #controls), not separate documents.
-
-  The console itself sits behind a login and has nothing to index.
+  The landing page is one prerendered HTML file; its sections are anchors
+  (#how, #console, #controls), not separate pages, and the download form's
+  /get/ pages are marked noindex. The console has its own host and sits
+  behind a login, with nothing to index.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>

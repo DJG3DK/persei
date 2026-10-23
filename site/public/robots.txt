@@ -9,8 +9,8 @@
 User-agent: *
 Allow: /
 
-# The API answers JSON to an authenticated session and 401 to everyone else.
-# Nothing there is indexable and crawling it only burns budget.
+# /api/ on this host only redirects to the console's own host (an old
+# bookmark from before 2026-09-17); nothing there is indexable.
 Disallow: /api/
 
 # The download form and the redirects behind it (2026-10-22): one page per

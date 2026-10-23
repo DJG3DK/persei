@@ -198,7 +198,7 @@ def test_create_repository_makes_one_commit_on_main(tmp_path):
     assert _git(repo, "status", "--porcelain") == ""
     # Committed under the fallback identity: no user.* is configured anywhere
     # in this test's environment (see _no_git_identity).
-    assert _git(repo, "log", "-1", "--format=%an <%ae>") == "Persei <tektonix@localhost>"
+    assert _git(repo, "log", "-1", "--format=%an <%ae>") == "Persei <persei@localhost>"
     assert "user.name" not in _git(repo, "config", "--local", "--list"), \
         "the fallback is per-command, never written into the repo"
 
