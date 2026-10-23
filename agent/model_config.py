@@ -201,7 +201,7 @@ def load_forced_tool_probe() -> dict:
     """{"probed_at": iso, "models": {id: {"status": "ok"|"fail"|"error", ...}}}"""
     try:
         return json.loads(FORCED_TOOL_PROBE_PATH.read_text())
-    except Exception:
+    except Exception:  # noqa: BLE001 -- no readable probe file means nothing probed yet
         return {"probed_at": None, "models": {}}
 
 

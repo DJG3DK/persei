@@ -1262,7 +1262,7 @@ async def _can(client: GitHubClient, path: str, params: dict) -> bool | None:
         return True
     except PermissionError:
         return False
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 -- any other answer is "unknown", which None reports
         return None
 
 

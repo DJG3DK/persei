@@ -220,7 +220,7 @@ def flush_task_log_bg(rec: planning_log.Recorder) -> None:
     try:
         live_state.fire_and_forget(rec.flush())
     except Exception:  # noqa: BLE001
-        pass
+        logger.warning("task transcript flush could not be scheduled", exc_info=True)
 # Monotonic per-task event ids for the socket-first hydrate (log_stream.py).
 task_event_seq = log_stream.SeqCounter()
 live_planning_log: dict[str, list] = {}

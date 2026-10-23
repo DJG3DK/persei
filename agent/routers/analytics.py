@@ -279,7 +279,7 @@ def _reviewer_usage() -> dict:
     for ln in lines:
         try:
             r = json.loads(ln)
-        except Exception:
+        except Exception:  # noqa: BLE001 -- a torn line in an append-only log is skipped
             continue
         out["reviews"] += 1
         cost = r.get("cost")

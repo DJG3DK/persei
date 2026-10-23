@@ -77,7 +77,7 @@ def resolve_slug(repo: str) -> str | None:
                 ["git", "-C", path, "config", "--local", "--get", "remote.origin.url"],
                 capture_output=True, text=True, timeout=10,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 -- a checkout git cannot read is not a match
             continue
         if r.returncode == 0:
             slug = repo_slug_from_remote(r.stdout)

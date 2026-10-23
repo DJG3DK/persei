@@ -1083,7 +1083,7 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
     asked_at = time.time()
     try:
         await trigger_check(repo, branch)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 -- retried once below; a second failure escalates
         import asyncio as _asyncio
         await _asyncio.sleep(3)
         try:
@@ -1103,7 +1103,7 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
             "phase": "review",
             "expected_seconds": None,
         }})
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 -- a status line only; the review wait goes on without it
         pass
 
     # The timeout is a runtime setting, so a large diff that needs longer can

@@ -627,7 +627,7 @@ async def delete_task(request: Request, task_id: str, repo: str, user: User = De
         for _q, ws in _subscribers.pop(task_id, []):
             try:
                 await ws.close(code=4000, reason="task deleted")
-            except Exception:
+            except Exception:  # noqa: BLE001 -- the socket may already be gone; the task is deleted either way
                 pass
         return {"ok": True}
 
