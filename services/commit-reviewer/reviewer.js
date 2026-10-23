@@ -1,4 +1,4 @@
-// commit-reviewer.js — the independent post-commit review gate.
+// reviewer.js — the independent post-commit review gate.
 //
 // Polls each project's live repository for an `agent/<task-id>` branch whose
 // tip has not been reviewed. The review unit is that branch plus its
