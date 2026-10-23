@@ -219,6 +219,64 @@ jobs:
           retention-days: 14
       - run: npm run build
 
+  e2e:
+    name: Console — end to end in a browser
+    # tests/e2e/test_console_e2e.py: the real server, against a real
+    # Postgres, serving the built dashboard to Chromium. An operator signs
+    # in, starts a task, approves its merge and sees it done. The model
+    # router and the review services are fakes in the test process
+    # (tests/e2e/fakes.py), so it makes no model call and needs no secret.
+    # Everywhere else that test skips; REQUIRE_E2E=1 makes a skip here a
+    # failure.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # The Chromium matching the pinned playwright, and its system libraries.
+          playwright install --with-deps chromium
+      - name: Build the dashboard the server serves
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: The console, end to end
+        run: python -m pytest -q -rs tests/e2e
+        env:
+          # The test creates a database of its own in this server and drops it.
+          AGENT_E2E_PG_DSN: postgresql://postgres:e2e@localhost:5432/postgres
+          REQUIRE_E2E: "1"
+          E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: e2e-failure
+          path: ${{ runner.temp }}/e2e
+          if-no-files-found: ignore
+          retention-days: 14
+
   site:
     name: Landing page — typecheck, lint, test, build
     # perseiagent.ai's public page, built separately from the console and not

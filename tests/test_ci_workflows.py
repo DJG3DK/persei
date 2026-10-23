@@ -320,3 +320,17 @@ def test_no_workflow_repeats_a_key():
     _Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
     for wf in sorted((REPO / ".github" / "workflows").glob("*.yml")):
         yaml.load(wf.read_text(), Loader=_Strict)
+
+
+def test_the_e2e_job_cannot_pass_by_skipping():
+    """tests/e2e skips without a Postgres, a built dashboard or Chromium, as
+    it does in the python job. In its own job each of those is provided, and
+    REQUIRE_E2E turns a skip into a failure."""
+    job = _jobs(CI)["e2e"]
+    runs = "\n".join(s.get("run") or "" for s in job["steps"])
+    assert "playwright install --with-deps chromium" in runs
+    assert "npm run build" in runs
+    step = _step(job, "end to end")
+    assert step["env"]["REQUIRE_E2E"] == "1" and step["env"]["AGENT_E2E_PG_DSN"].startswith("postgresql://")
+    assert "tests/e2e" in step["run"] and (REPO / "tests/e2e/test_console_e2e.py").exists()
+    assert "postgres" in job["services"]
