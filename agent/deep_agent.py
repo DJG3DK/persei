@@ -425,8 +425,23 @@ _REGENERABLE_NAMES = frozenset({
 # a relative target resolves against that unless the command cd's first.
 _SANDBOX_CWD = "/workspace"
 
-_SEGMENT_SPLIT = _re.compile(r"(\|\||&&|[;|\n()])")   # separators kept: `(` and `)` mark a subshell
+# Separators kept: `(` and `)` mark a subshell. A lone `&` ends a command
+# (`rm x & rm y`), but not in `&&`, `&>`, `>&` or `2>&1`; a `|` after `>`
+# is the clobber redirect `>|`, not a pipe.
+_SEGMENT_SPLIT = _re.compile(r"(\|\||&&|(?<![>&<])&(?![&>])|[;\n()]|(?<!>)\|)")
 _DELETE_COMMANDS = ("rm", "rmdir", "shred", "unlink")
+# Words that open a compound command or a body without being the command
+# that runs: `{ rm x; }`, `if true; then rm x; fi`, `for p in a; do rm "$p";
+# done`, `! rm x`, `cmd |& rm x`. The command is the word after them.
+# 2026-10-23, the property suite: every one of these hid the `rm` behind a
+# head the gate did not recognise.
+_SHELL_KEYWORDS = frozenset({"{", "}", "!", "then", "else", "elif", "do", "if", "while", "until", "&"})
+# Commands that change or remove files without being a delete: what they
+# land on is the loss. Their name in a string some wrapper runs (`xargs
+# truncate -s0`, `find -exec git checkout -- {} +`) asks, as a delete word
+# does there.
+_LOSSY_WORD_RE = _re.compile(
+    r"""(^|[\s;&|('"])(truncate|mv|cp|dd|tee|install|git|rsync)(\s|$)""")
 # Commands that run another command they are given: `env rm`, `xargs rm`,
 # `sh -c 'rm …'`, `find … -exec rm`. What they run is not parsed here; a
 # delete word among their arguments makes the segment unreadable, so it
@@ -459,30 +474,121 @@ _INLINE_DELETE_RE = _re.compile(
     r"child_process|\bexec\w*\s*\(|\bspawn\w*\s*\(|\bpopen\b|FileUtils|File\.delete|shutil\.move|\brename\w*\s*\(")
 
 
-def _segments(command: str) -> list[tuple[int, list[str]]]:
-    """The command split into simple segments, each tokenised, with the
-    subshell depth it runs at. A segment that will not tokenise comes back
-    as one unparseable token, so a caller fails closed on it instead of
-    skipping past it."""
-    import shlex
-    out: list[tuple[int, list[str]]] = []
-    depth = 0
-    for raw in _SEGMENT_SPLIT.split(command):
-        if raw == "(":
-            depth += 1
+def _mask_quotes(command: str) -> tuple[str, str]:
+    """The command with comments blanked, and the same text with quoted
+    content masked too, both the same length as the command.
+
+    The mask is what separators are looked for in: `sh -c 'cd x; rm y'` is
+    one command whose argument holds a `;`, not two commands. Code inside a
+    quote stays visible -- `"$(rm -rf src)"` runs the `rm` -- and so does an
+    unterminated quote's opening, so a command that will not parse still
+    splits where it can."""
+    clean = list(command)
+    mask = list(command)
+    stack: list[str] = []                     # "'", '"', "$(", "(", "`"
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        top = stack[-1] if stack else None
+        if top == "'":
+            if c == "'":
+                stack.pop()
+            else:
+                mask[i] = "_"
+            i += 1
             continue
-        if raw == ")":
-            depth = max(0, depth - 1)
+        if c == "\\" and i + 1 < n:
+            mask[i] = mask[i + 1] = "_"
+            i += 2
+            continue
+        if top == '"':
+            if c == '"':
+                stack.pop()
+            elif command.startswith("$(", i):
+                stack.append("$(")
+                i += 2
+                continue
+            elif c == "`":
+                stack.append("`")
+            else:
+                mask[i] = "_"
+            i += 1
+            continue
+        if c in "'\"":
+            stack.append(c)
+        elif c == "`":
+            if top == "`":
+                stack.pop()
+            else:
+                stack.append("`")
+        elif c == "(":
+            stack.append("(")
+        elif c == ")" and top in ("(", "$("):
+            stack.pop()
+        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()"):
+            stop = command.find("\n", i)
+            stop = n if stop < 0 else stop
+            for j in range(i, stop):
+                clean[j] = mask[j] = " "
+            i = stop
+            continue
+        i += 1
+    return "".join(clean), "".join(mask)
+
+
+def _segments(command: str) -> list[tuple[tuple[int, ...], str, list[str], str]]:
+    """The command split into simple segments: (scopes, sep, tokens, raw).
+
+    `scopes` names the subshells the segment runs in, outermost first, each
+    by its own serial -- `(cd src); (rm x)` is two subshells at one depth,
+    and only a serial tells them apart (2026-10-23, the property suite: the
+    second read the first's cd). `sep` is the separator before the segment
+    (`&&`, `||`, `;`, `|`, `&`, a newline, or "" at the start). A segment
+    that will not tokenise comes back as one unparseable token, so a caller
+    fails closed on it instead of skipping past it. Leading keywords (`{`,
+    `then`, `do`, a function's `name()` body) are dropped, so the head is
+    the command that runs."""
+    import shlex
+    clean, mask = _mask_quotes(command)
+    out: list[tuple[tuple[int, ...], str, list[str], str]] = []
+    scopes: list[int] = []
+    serial = 0
+    sep = ""
+    pieces: list[str] = []
+    pos = 0
+    for m in _SEGMENT_SPLIT.finditer(mask):
+        pieces.append(clean[pos:m.start()])
+        pieces.append(m.group())
+        pos = m.end()
+    pieces.append(clean[pos:])
+    for i, raw in enumerate(pieces):
+        if i % 2:                                             # a separator
+            if raw == "(":
+                serial += 1
+                scopes.append(serial)
+            elif raw == ")":
+                if scopes:
+                    scopes.pop()
+            if raw not in ("(", ")") or not sep:
+                sep = raw
             continue
         raw = raw.strip()
-        if not raw or raw in ("||", "&&", ";", "|"):
+        if not raw:
             continue
         try:
             tokens = shlex.split(raw, posix=True)
         except ValueError:
             tokens = [_UNPARSEABLE, raw]                      # the text kept, so a delete in it is seen
+        while tokens and tokens[0] != _UNPARSEABLE:
+            if tokens[0] in _SHELL_KEYWORDS:
+                tokens = tokens[1:]
+            elif tokens[0] == "function" and len(tokens) > 1:
+                tokens = tokens[2:]                           # `function f { ... }`
+            else:
+                break
         if tokens:
-            out.append((depth, tokens))
+            out.append((tuple(scopes), sep, tokens, raw))
+            sep = ""
     return out
 
 
@@ -503,26 +609,41 @@ def _resolve(target: str, cwd: str) -> str:
     return posixpath.normpath(target)
 
 
-def _target_is_scratch(target: str, cwd: str) -> bool:
-    """True when deleting this path loses nothing -- container scratch space,
-    or something a build regenerates. Anything uncertain is not scratch."""
+def _scratch_kind(target: str, cwd: str) -> str | None:
+    """"scratch" when deleting this path loses nothing (container scratch
+    space), "regenerable" when it is something a build regenerates, None
+    otherwise. Anything uncertain is None.
+
+    A regenerable name is only a guess from the name: projects commit `dist`
+    or a `build/` of sources often enough (2026-10-23, the property suite: a
+    tracked dist/bundle.js went unasked). With a repo, git has the last word
+    on those -- see _IF_TRACKED."""
     if not target or any(ch in target for ch in "$`"):
-        return False                                         # a variable: cannot judge it
+        return None                                          # a variable: cannot judge it
     resolved = _resolve(target, cwd)
     segments = [seg.lower() for seg in resolved.split("/") if seg not in ("", ".")]
     if not segments or ".." in segments:
-        return False                                         # "/" itself, or a path climbing out
+        return None                                          # "/" itself, or a path climbing out
     if ".git" in segments:
-        return False                                         # history is work
+        return None                                          # history is work
     for root in _SCRATCH_ROOTS:
         root_segments = [seg for seg in root.split("/") if seg]
         if segments[:len(root_segments)] == root_segments and len(segments) > len(root_segments):
-            return True                                      # inside scratch, never the root itself
-    return any(seg in _REGENERABLE_NAMES for seg in segments)
+            return "scratch"                                 # inside scratch, never the root itself
+    return "regenerable" if any(seg in _REGENERABLE_NAMES for seg in segments) else None
 
 
 _ASSIGNMENT_RE = re.compile(
     r"""(?:^|[;&|(]\s*|\s)([A-Za-z_][A-Za-z0-9_]*)=(?:"([^"$`]*)"|'([^']*)'|([^\s;&|"'$`()]+))(?=\s|;|&|\||$)""")
+# Every other way a name gets a value: an assignment whose value is not a
+# literal (`P=$(...)`, `P+=x`), a loop variable, a `read`. Each one makes the
+# name unreadable from there on (2026-09-29 audit, A1, finished 2026-10-23
+# when the property suite found `export P=notes.txt; for P in src/l*; do rm
+# -rf $P; done` read as a delete of notes.txt).
+_ANY_ASSIGNMENT_RE = re.compile(r"(?:^|[;&|(]\s*|\s)([A-Za-z_][A-Za-z0-9_]*)\+?=")
+_LOOP_OR_READ_RE = re.compile(
+    r"\b(?:for|select)\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b|\b(?:read|readarray|mapfile)\b([^;&|\n]*)")
+_NAME_RE = re.compile(r"(?<![\w-])[A-Za-z_][A-Za-z0-9_]*\b")
 
 
 def _expand_local_assignments(command: str) -> str:
@@ -533,23 +654,31 @@ def _expand_local_assignments(command: str) -> str:
     quote stays unreadable, and the delete still asks. 2026-09-29: the coder
     kept a scratch path in a variable and every cleanup asked for approval,
     five times in one task, with auto mode on."""
-    # Left to right, so a reference sees only the assignments BEFORE it:
+    # Left to right, so a reference sees only the writes BEFORE it:
     # `P=src; rm "$P"; P=/tmp/x` deletes src, whatever P becomes later.
     # (2026-09-29 audit, A1: the first version let the last assignment win.)
-    assignments = [(m.start(), m.group(1), next((g for g in m.groups()[1:] if g is not None), None))
-                   for m in _ASSIGNMENT_RE.finditer(command)]
-    if not any(v is not None for _, _, v in assignments):
+    literal = {m.start(): (m.group(1), next((g for g in m.groups()[1:] if g is not None), None))
+               for m in _ASSIGNMENT_RE.finditer(command)}
+    if not literal:
         return command
+    writes = [(m.start(), m.group(1), literal.get(m.start(), (None, None))[1])
+              for m in _ANY_ASSIGNMENT_RE.finditer(command)]
+    for m in _LOOP_OR_READ_RE.finditer(command):
+        names = [m.group(1)] if m.group(1) else _NAME_RE.findall(m.group(2) or "")
+        writes += [(m.start(), name, None) for name in names]
+    writes.sort(key=lambda w: w[0])
 
     def _sub(m: re.Match) -> str:
         name = m.group(1) or m.group(2)
         value = None
-        for start, n, v in assignments:
-            if start < m.start() and n == name and v is not None:
-                value = v
+        for start, n, v in writes:
+            if start < m.start() and n == name:
+                value = v                                    # None: a write that cannot be read
         return value if value is not None else m.group(0)
 
-    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", _sub, command)
+    # Not `\$P`: an escaped dollar is the literal text, and expands only
+    # where the string is run (`eval "rm \"\$P\""`), read there.
+    return re.sub(r"(?<!\\)\$\{([A-Za-z_][A-Za-z0-9_]*)\}|(?<!\\)\$([A-Za-z_][A-Za-z0-9_]*)", _sub, command)
 
 
 # A heredoc fed to one of these, and written to a file, only becomes that
@@ -599,11 +728,28 @@ def _masked_line(command: str, start: int) -> tuple[str, int]:
     return "".join(out), i
 
 
-def _heredoc_is_inert(masked: str, raw: str, at: int) -> bool:
+def _heredoc_is_inert(masked: str, raw: str, at: int, rest: str = "") -> bool:
     """Is the heredoc whose `<<` is at `at` only written to a file? Its
-    command is `cat` with a stdout redirect or `tee` with a file, and its
-    output goes nowhere else: no pipe before the command ends, and no process
-    substitution on the line."""
+    command is `cat` with a stdout redirect or `tee` with a file, its
+    output goes nowhere else (no pipe before the command ends, no process
+    substitution on the line), and `rest` -- the command after this line --
+    does not run the file it writes (2026-10-23: `cat > run.sh <<X ... X`
+    then `sh run.sh` ran a body the gate had stripped)."""
+    if not _heredoc_only_written(masked, raw, at):
+        return False
+    before = list(_COMMAND_END_RE.finditer(masked, 0, at))
+    begin = before[-1].end() if before else 0
+    after = _COMMAND_END_RE.search(masked, at)
+    simple = _HEREDOC_RE.sub(lambda m: " " * len(m.group()), raw[begin:after.start() if after else len(raw)])
+    words = simple.split()
+    files = [t for t, _ in _redirect_targets(simple)]
+    if words and words[0].rsplit("/", 1)[-1] == "tee":
+        files += [w for w in _ANY_REDIRECT_RE.sub(" ", simple).split()[1:] if not w.startswith("-")]
+    return not any(_runs_file(rest, f) for f in files)
+
+
+def _heredoc_only_written(masked: str, raw: str, at: int) -> bool:
+    """_heredoc_is_inert without the question of running the file later."""
     if ">(" in masked or "<(" in masked:
         return False
     before = list(_COMMAND_END_RE.finditer(masked, 0, at))
@@ -655,9 +801,11 @@ def _strip_inert_heredocs(command: str) -> str:
                     out.append(command[end + 1:])             # bodies unknown: strip nothing more
                 return "\n".join(out)
             heredocs.append((m.group(2) or m.group(3) or m.group(4), m.group(1) == "-",
-                             _heredoc_is_inert(masked, raw, op.start())))
+                             _heredoc_is_inert(masked, raw, op.start(), command[end:]), m.span()))
         pos = end + 1
-        for delimiter, strip_tabs, inert in heredocs:
+        line_at = len(out) - 1
+        emptied: list[tuple[int, int]] = []
+        for delimiter, strip_tabs, inert, span in heredocs:
             body: list[str] = []
             closing = None
             while pos <= n:
@@ -674,20 +822,41 @@ def _strip_inert_heredocs(command: str) -> str:
                     out.append(_strip_inert_heredocs("\n".join(body)))
                 if closing is not None:
                     out.append(closing)
+            elif not body:
+                emptied.append(span)
+        # An empty body written out empties the file: read it as the
+        # `cat > f < /dev/null` it is, so the redirect is judged.
+        for start, stop in reversed(emptied):
+            out[line_at] = out[line_at][:start] + "< /dev/null" + out[line_at][stop:]
     return "\n".join(out)
+
+
+def _git_subcommand(tokens: list[str]) -> tuple[str, list[str]]:
+    """`git [-C dir] [-c k=v] <sub> <args>` -> (sub, args); ("", []) if none."""
+    i = 1
+    while i < len(tokens) and tokens[i].startswith("-"):
+        i += 2 if tokens[i] in ("-C", "-c", "--git-dir", "--work-tree") else 1
+    if i >= len(tokens):
+        return "", []
+    return tokens[i], tokens[i + 1:]
+
+
+def _has_short_flag(args: list[str], letter: str, long: str = "") -> bool:
+    return any((a.startswith("-") and not a.startswith("--") and letter in a[1:]) or (long and a == long)
+               for a in args)
 
 
 def _git_discards_edits(tokens: list[str]) -> bool:
     """`git checkout -- .`, `git checkout -f`, `git restore` (but not a
     `--staged`-only unstage), `git switch -f` and `git stash drop|clear`:
     each throws away uncommitted work, as `git reset --hard` does. A plain
-    `git checkout <branch>` refuses to, so it does not ask."""
-    i = 1
-    while i < len(tokens) and tokens[i].startswith("-"):
-        i += 2 if tokens[i] in ("-C", "-c", "--git-dir", "--work-tree") else 1
-    if i >= len(tokens):
-        return False
-    sub, args = tokens[i], tokens[i + 1:]
+    `git checkout <branch>` refuses to, so it does not ask.
+
+    2026-10-23, the property suite: `git rm` (without `--cached`) deletes the
+    files it untracks, `git checkout-index -f` writes the index over the
+    worktree, and `git read-tree -u` checks a tree out over it. All three
+    lost tracked work unasked."""
+    sub, args = _git_subcommand(tokens)
     force = any(a in ("-f", "--force", "--discard-changes") for a in args)
     if sub == "checkout":
         return force or "--" in args or "." in args
@@ -699,56 +868,201 @@ def _git_discards_edits(tokens: list[str]) -> bool:
         return not staged_only
     if sub == "stash":
         return bool(args) and args[0] in ("drop", "clear")
+    if sub == "rm":
+        return "--cached" not in args
+    if sub == "checkout-index":
+        return _has_short_flag(args, "f", "--force")
+    if sub == "read-tree":
+        return "-u" in args or "--reset" in args
     return False
+
+
+# A target only a repo can judge: a build-output name (`dist`) a project may
+# commit after all, or a file a command writes over (`>`, `cp`, `tee`, `dd
+# of=`). Without a repo root these do not ask -- every redirect would -- and
+# with one, only tracked content does.
+_IF_TRACKED = "\x02"
+# `>`, `>|`, `&>`, `2>` and `>&file` truncate what they land on; `>>`
+# appends. `>&2` duplicates a descriptor and `>(...)` is a process.
+_WRITE_REDIRECT_RE = re.compile(r"(?<![<>])(?:\d+|&)?(>>|>\||>&|>)(?![>(])")
+_SHELL_RUNNERS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "source", "."})
+# Wrappers that append arguments to the command they are given, so the
+# command cannot be read on its own: `xargs truncate -s0`.
+_ARG_APPENDING_WRAPPERS = frozenset({"xargs", "find", "parallel", "watch"})
+
+
+def _redirect_targets(raw: str) -> list[tuple[str, bool]]:
+    """(target, truncates) for each file this simple command redirects to."""
+    import shlex
+    clean, mask = _mask_quotes(raw)
+    out: list[tuple[str, bool]] = []
+    for m in _WRITE_REDIRECT_RE.finditer(mask):
+        j = m.end()
+        while j < len(mask) and mask[j] in " \t":
+            j += 1
+        k = j
+        while k < len(mask) and mask[k] not in " \t\n;&|<>()":
+            k += 1
+        word = clean[j:k]
+        if not word or (m.group(1) == ">&" and (word.isdigit() or word == "-")):
+            continue
+        try:
+            word = (shlex.split(word) or [word])[0]
+        except ValueError:
+            pass
+        if word.startswith("/dev/") and not word.startswith("/dev/shm/"):
+            continue                                          # null, a stream, a tty
+        out.append((word, m.group(1) != ">>"))
+    return out
+
+
+def _runs_file(text: str, target: str) -> bool:
+    """Does `text` run `target` as a script -- `sh run.sh`, `bash ./run.sh`,
+    `source run.sh`, `./run.sh`?"""
+    name = re.escape(target[2:] if target.startswith("./") else target)
+    end = r"""["']?(?=$|[\s;&|)])"""
+    if re.search(rf"""(?:^|[\s;&|(`])(?:sh|bash|dash|zsh|ksh|source|\.)\s+(?:-\S+\s+)*["']?(?:\./)?{name}{end}""",
+                 text):
+        return True
+    if re.search(rf"(?:^|[;&|(`\n])\s*\./{name}{end}", text):
+        return True
+    return "/" in target and bool(re.search(rf"(?:^|[;&|(`\n])\s*{name}{end}", text))
+
+
+def _wrapped_scripts(head: str, tokens: list[str]) -> list[str]:
+    """The command lines a wrapper runs, as text to read in its place:
+    `sh -c 'x'` -> x, `eval x y` -> "x y", `timeout 5 git rm f` -> each
+    suffix that could be the command (`5 git rm f`, `git rm f`, ...)."""
+    import shlex
+    if head in ("sh", "bash", "dash", "zsh", "ksh", "busybox"):
+        for i, tok in enumerate(tokens[1:-1], start=1):
+            if tok.startswith("-") and not tok.startswith("--") and "c" in tok[1:]:
+                return [tokens[i + 1]]
+        return []
+    if head == "eval":
+        return [" ".join(tokens[1:])]
+    return [shlex.join(tokens[i:]) for i in range(1, min(len(tokens), 8)) if not tokens[i].startswith("-")]
 
 
 def _deletions_that_lose_work(command: str) -> list[str]:
     """Targets of this command's deletions that are not scratch. Empty means
     nothing of value is being deleted. A target that cannot be read (a shell
     variable, an unparseable segment, `rm` with only flags) is reported, so
-    the caller asks about it rather than assuming."""
+    the caller asks about it rather than assuming. Targets only a repo can
+    judge (_IF_TRACKED) are left out: see _loss_targets."""
+    return [t for t in _loss_targets(command) if not t.startswith(_IF_TRACKED)]
+
+
+def _loss_targets(command: str, cwd: str = _SANDBOX_CWD, nesting: int = 0) -> list[str]:
+    """_deletions_that_lose_work, plus the targets only a repo can judge:
+    tracked content under a build-output name, and files written over by a
+    redirect, `cp`, `tee` or `dd`. `cwd` and `nesting` are for a script a
+    wrapper runs (`sh -c '...'`), read where the wrapper runs it."""
+    if nesting > 4:
+        return [_ALWAYS + "nested too deeply to read"]
     command = _expand_local_assignments(_strip_inert_heredocs(command))
-    cwd = _SANDBOX_CWD
-    # The cwd outside each open subshell: `(cd /tmp); rm -rf x` deletes
+    # Per open subshell, the state outside it: `(cd /tmp); rm -rf x` deletes
     # /workspace/x, because the cd ran in a child that has since exited.
-    outer_cwds: list[str] = []
+    scope_stack: list[tuple[int, str, list[str], bool]] = []
+    # Where the shell is if a `cd` failed: `cd lib; rm -f x` with no lib/
+    # deletes ./x (2026-10-23, the property suite). Only a failed cd that
+    # something still runs after counts -- `cd x && rm y` never runs the rm
+    # -- and only a repo can judge those paths (_IF_TRACKED), so without one
+    # nothing new asks.
+    fallbacks: list[str] = []
+    guarded = True
+    just_cd = False
+    # What a `mv` moved where: deleting the destination later in the same
+    # command deletes the source's content (`git mv a.ts b.ts && rm b.ts`).
+    moved: list[tuple[str, list[str]]] = []
+    moved_unknown = False
     losses: list[str] = []
+    written: set[str] = set()                                 # files a redirect wrote, to run later
 
     def _record(targets: list[str], prefix: str = "") -> None:
         for t in targets:
             if any(ch in t for ch in "$`") or t.startswith(_ALWAYS):
                 losses.append(_ALWAYS + t)                    # unreadable: ask, never resolve
                 continue
-            if _target_is_scratch(t, cwd):
+            if moved_unknown:
+                losses.append(_ALWAYS + "a delete after a move this gate could not read: " + t)
                 continue
-            resolved = _resolve(t, cwd)
-            if ".git" in resolved.lower().split("/"):
-                # git cannot report on its own directory -- ls-files lists
-                # nothing under .git, so the tracked-content check would wave
-                # a `rm -rf .git` straight through. Always ask.
-                losses.append(_ALWAYS + resolved)
-            else:
-                losses.append(prefix + resolved)
+            for where, extra in [(cwd, "")] + ([(fb, _IF_TRACKED) for fb in fallbacks] if not guarded else []):
+                resolved = _resolve(t, where)
+                if "$" in resolved:
+                    losses.append(_ALWAYS + resolved)         # relative to a cd that could not be read
+                    continue
+                # Before the scratch test: `mv src /tmp/s && rm -rf /tmp/s`
+                # deletes src's content from scratch space.
+                for dest, sources in moved:
+                    if dest == resolved or dest.startswith(resolved + "/") or resolved.startswith(dest + "/"):
+                        losses.extend(extra + s for s in sources)
+                kind = _scratch_kind(t, where)
+                if kind == "scratch":
+                    continue
+                if ".git" in resolved.lower().split("/"):
+                    # git cannot report on its own directory -- ls-files lists
+                    # nothing under .git, so the tracked-content check would wave
+                    # a `rm -rf .git` straight through. Always ask.
+                    losses.append(_ALWAYS + resolved)
+                    continue
+                tag = prefix if prefix.startswith(_IF_TRACKED) else (
+                    _IF_TRACKED + prefix if extra or kind == "regenerable" else prefix)
+                losses.append(tag + resolved)
 
     inline = _INTERPRETER_INLINE_RE.search(command)
     if inline and _INLINE_DELETE_RE.search(command, inline.start()):
         losses.append(_ALWAYS + "an inline script that deletes or runs something")
 
-    for depth, tokens in _segments(command):
-        while len(outer_cwds) < depth:
-            outer_cwds.append(cwd)                            # entering a subshell
-        while len(outer_cwds) > depth:
-            cwd = outer_cwds.pop()                            # leaving one: its cd is gone
+    segments = _segments(command)
+    for at, (scopes, sep, tokens, raw) in enumerate(segments):
+        next_sep = segments[at + 1][1] if at + 1 < len(segments) else ""
+        while scope_stack and (len(scope_stack) > len(scopes)
+                               or scope_stack[-1][0] != scopes[len(scope_stack) - 1]):
+            _, cwd, fallbacks, guarded = scope_stack.pop()    # leaving a subshell: its cd is gone
+        while len(scope_stack) < len(scopes):
+            scope_stack.append((scopes[len(scope_stack)], cwd, list(fallbacks), guarded))
+        was_cd, just_cd = just_cd, False
+        if sep not in ("", "&&", "(", ")") and not (sep == "||" and was_cd):
+            guarded = False                                   # a failed cd no longer stops what runs
         if tokens[0] == _UNPARSEABLE:
-            # `bash -c "cd src; rm -rf lib"` splits at the `;` into two halves
-            # that will not tokenise. The half with the delete word asks; a
-            # heredoc line with a stray apostrophe does not (2026-09-29).
-            if _DELETE_WORD_RE.search(tokens[1]):
+            # A segment with an unbalanced quote will not tokenise. One with
+            # a delete or lossy word asks; a heredoc line with a stray
+            # apostrophe does not (2026-09-29).
+            if _DELETE_WORD_RE.search(tokens[1]) or _LOSSY_WORD_RE.search(tokens[1]):
                 losses.append(_ALWAYS + tokens[1].strip())
             continue
         head = tokens[0].rsplit("/", 1)[-1]
-        if head == "cd" and len(tokens) > 1 and not any(ch in tokens[1] for ch in "$`"):
-            cwd = _resolve(tokens[1], cwd)
+        # A file this command wrote and now runs: what it does is the text
+        # written into it, which was never read as a command (2026-10-23:
+        # `echo 'rm -rf src' > run.sh && bash run.sh`). A heredoc written and
+        # run is read instead -- _strip_inert_heredocs keeps its body.
+        runs = [t for t in tokens[1:] if not t.startswith("-")][:1] if head in _SHELL_RUNNERS else [tokens[0]]
+        if any(_resolve(t, cwd) in written for t in runs if "/" in t or head in _SHELL_RUNNERS):
+            losses.append(_ALWAYS + "a script this command wrote: " + " ".join(tokens))
+            continue
+        # What a redirect lands on (2026-10-23: `> README.md`, `: > f`,
+        # `grep x f > f` all emptied tracked files unasked). A heredoc only
+        # written out with a body is an edit, as in _strip_inert_heredocs.
+        heredoc_write = head in _HEREDOC_TEXT_SINKS and _HEREDOC_OP_RE.search(_mask_quotes(raw)[1])
+        for target, truncates in _redirect_targets(raw):
+            if not heredoc_write:
+                if not any(ch in target for ch in "$`"):
+                    written.add(_resolve(target, cwd))
+                if truncates:
+                    _record([target], prefix=_IF_TRACKED + _OVERWRITE)
+        if head == "cd" and "|" in (sep, next_sep):
+            continue                                          # a pipeline stage is a subshell: its cd is gone
+        if head == "cd":
+            dest = next((t for t in tokens[1:] if not t.startswith("-")), "~")
+            fallbacks = list(dict.fromkeys([cwd, *fallbacks]))[:4]
+            # An unreadable destination leaves every relative path after it
+            # unreadable too: `$` in the cwd makes _record ask about them.
+            cwd = "/$" + dest if any(ch in dest for ch in "$`") else _resolve(dest, cwd)
+            guarded = just_cd = True
+            continue
+        if head in ("exit", "return") and sep == "||" and was_cd:
+            guarded = True                                    # `cd x || exit`: nothing runs in the old cwd
             continue
         if head == "git" and "clean" in tokens[1:4] and any(
                 (t.startswith("-") and not t.startswith("--") and "f" in t) or t == "--force"
@@ -757,6 +1071,12 @@ def _deletions_that_lose_work(command: str) -> list[str]:
             continue
         if head == "git" and _git_discards_edits(tokens):
             losses.append(_ALWAYS + " ".join(tokens))         # uncommitted edits, gone
+            continue
+        if head == "git" and _git_subcommand(tokens)[0] == "checkout":
+            # `git checkout src/` with no `--` checks a PATH out over its
+            # edits; `git checkout main` switches branch. Only the repo can
+            # tell the two apart (2026-10-23, the property suite).
+            _record([a for a in _git_subcommand(tokens)[1] if not a.startswith("-")], prefix=_IF_TRACKED)
             continue
         if head == "rsync" and any(t.startswith(("--del", "--remove-source-files")) for t in tokens):
             losses.append(_ALWAYS + " ".join(tokens))         # what it removes depends on both trees
@@ -775,7 +1095,7 @@ def _deletions_that_lose_work(command: str) -> list[str]:
                 continue
             _record(targets)
             continue
-        if head == "git" and "reset" in tokens[1:4] and "--hard" in tokens:
+        if head == "git" and "reset" in tokens[1:4] and any(t in ("--hard", "--keep", "--merge") for t in tokens):
             losses.append(_ALWAYS + "git reset --hard")       # throws away every uncommitted edit
             continue
         if head == "find" and "-delete" in tokens:
@@ -786,18 +1106,60 @@ def _deletions_that_lose_work(command: str) -> list[str]:
                 paths.append(tok)
             _record(paths or ["."])
             continue
-        if head in _WRAPPER_COMMANDS and _hides_a_delete(tokens):
-            losses.append(_ALWAYS + " ".join(tokens))         # a delete run by something else: ask
+        if head in _WRAPPER_COMMANDS:
+            if _hides_a_delete(tokens) or (head in _ARG_APPENDING_WRAPPERS and any(
+                    tok.rsplit("/", 1)[-1] in ("truncate", "mv", "cp", "dd", "tee", "git", "install")
+                    or _LOSSY_WORD_RE.search(tok) for tok in tokens[1:])):
+                losses.append(_ALWAYS + " ".join(tokens))     # a delete run by something else: ask
+                continue
+            # What it runs, read where it runs (2026-10-23: `sh -c 'printf ""
+            # > f'`, `eval 'git mv -f a b'`, `timeout 5 git rm f`).
+            for script in _wrapped_scripts(head, tokens):
+                losses.extend(_loss_targets(script, cwd, nesting + 1))
             continue
-        if head == "mv":
-            args = [t for t in tokens[1:] if not t.startswith("-")]
-            if len(args) < 2 or any(t == "-t" or t.startswith("--target-directory") for t in tokens):
+        if head == "mv" or (head == "git" and _git_subcommand(tokens)[0] == "mv"):
+            args = tokens[1:] if head == "mv" else _git_subcommand(tokens)[1]
+            paths = [t for t in args if not t.startswith("-")]
+            if len(paths) < 2 or any(t == "-t" or t.startswith("--target-directory") for t in args):
                 losses.append(_ALWAYS + " ".join(tokens))     # a form not read here: ask
                 continue
-            dest, sources = args[-1], args[:-1]
-            # The file `mv` lands on, or the file it becomes inside a directory.
-            _record([dest, *(dest.rstrip("/") + "/" + s.rstrip("/").rsplit("/", 1)[-1] for s in sources)],
-                    prefix=_OVERWRITE)
+            dest, sources = paths[-1], paths[:-1]
+            landed = [dest, *(dest.rstrip("/") + "/" + s.rstrip("/").rsplit("/", 1)[-1] for s in sources)]
+            # The file `mv` lands on, or the file it becomes inside a
+            # directory. `git mv` without -f refuses to overwrite.
+            if head == "mv" or _has_short_flag(args, "f", "--force"):
+                _record(landed, prefix=_OVERWRITE)
+            if any(ch in p for p in paths for ch in "$`*?["):
+                moved_unknown = True                          # where it went cannot be read
+                continue
+            kept = [_resolve(s, cwd) for s in sources if _scratch_kind(s, cwd) != "scratch"]
+            if kept:
+                moved += [(_resolve(p, cwd), kept) for p in landed]
+            continue
+
+
+        if head in ("cp", "install"):
+            # 2026-10-23: `cp empty.txt README.md` emptied a tracked file.
+            # Like mv's destination, but only a repo can say: a cp to an
+            # untracked path is how most files are made.
+            args = tokens[1:]
+            if any(t in ("-t", "-S", "--suffix") or t.startswith("--target-directory") for t in args):
+                losses.append(_ALWAYS + " ".join(tokens))
+                continue
+            paths = [t for t in args if not t.startswith("-")]
+            if len(paths) >= 2:
+                dest, sources = paths[-1], paths[:-1]
+                _record([dest, *(dest.rstrip("/") + "/" + s.rstrip("/").rsplit("/", 1)[-1] for s in sources)],
+                        prefix=_IF_TRACKED + _OVERWRITE)
+            continue
+        if head == "tee":
+            _record([t for t in tokens[1:] if not t.startswith("-")] if not _has_short_flag(tokens[1:], "a", "--append")
+                    else [], prefix=_IF_TRACKED + _OVERWRITE)
+            continue
+        if head == "dd":
+            if not any(t.startswith("conv=") and "notrunc" in t for t in tokens):
+                _record([t[3:] for t in tokens[1:] if t.startswith("of=") and not t.startswith("of=/dev/")],
+                        prefix=_IF_TRACKED + _OVERWRITE)
             continue
         if head in _DELETE_COMMANDS:
             targets = [t for t in tokens[1:] if not t.startswith("-")]
@@ -860,24 +1222,30 @@ def _bash_deletes_real_work(req, repo_root: str | None = None) -> bool:
     With `repo_root`, a delete inside the worktree is judged against git:
     tracked content asks, the agent's own untracked scratch does not. Without
     it (the module-level default, and what the tests pin) every non-scratch
-    delete asks, which is the safe direction to be wrong in.
+    delete asks, which is the safe direction to be wrong in -- except the
+    targets only a repo can judge (_IF_TRACKED: build-output names, files a
+    redirect or `cp` writes over), which would make every `> out.log` ask.
     """
-    targets = _deletions_that_lose_work(str(req.tool_call["args"].get("command", "")))
-    if not targets or repo_root is None:
-        return bool(targets)
+    targets = _loss_targets(str(req.tool_call["args"].get("command", "")))
+    if repo_root is None:
+        return any(not t.startswith(_IF_TRACKED) for t in targets)
     for target in targets:
         if target.startswith(_ALWAYS):
             return True                                      # unreadable, or a wholesale clean
+        if_tracked = target.startswith(_IF_TRACKED)
+        target = target[len(_IF_TRACKED):] if if_tracked else target
         overwrite = target.startswith(_OVERWRITE)
         target = target[len(_OVERWRITE):] if overwrite else target
         if not (target == _SANDBOX_CWD or target.startswith(_SANDBOX_CWD + "/")):
+            if if_tracked:
+                continue                                     # nothing outside is tracked here
             return True                                      # outside the worktree: always ask
-        if overwrite:
+        if overwrite and not any(ch in target for ch in "*?["):
             if _is_tracked_file(repo_root, target):
-                return True                                  # a mv onto tracked content
+                return True                                  # a mv, cp or `>` onto tracked content
             continue
         if _covers_tracked_files(repo_root, target):
-            return True
+            return True                                      # (a glob: whatever it may match)
     return False
 
 
