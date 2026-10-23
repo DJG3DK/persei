@@ -437,6 +437,11 @@ jobs:
           if grep -q -i 'skipped' /tmp/pytest.out; then
             echo "a docker-backed suite skipped although the image was just built" >&2; exit 1
           fi
+      - name: The review gate's sandbox, against the real image
+        # The services job runs this file too, without an image, so its
+        # real-Docker cases (a check that times out is killed, R16) only
+        # run here.
+        run: node tests/test_reviewer_sandbox.js
 
   app:
     name: Desktop app — fmt, clippy, tests
