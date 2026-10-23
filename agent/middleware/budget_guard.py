@@ -80,7 +80,7 @@ SETTLE_TIMEOUT_S = 2.0
 SETTLE_POLL_S = 0.1
 
 # The router sets this on every response, streaming included, and logs
-# the same value with the call's billed cost (custom_callbacks.py).
+# the same value with the call's billed cost (services/model-router/router/app.py).
 CALL_ID_HEADER = "x-router-call-id"
 
 

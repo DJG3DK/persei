@@ -1140,8 +1140,8 @@ async def _stream_graph(task_id: str, repo: str, goal: str, budget_usd: float, g
         # always re-raise CancelledError at the end regardless of these writes.
         try:
             await graph.aupdate_state(thread_config, {"cost_so_far": cost_now})
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            logger.exception("cost_so_far patch failed for task %s (cancellation still honored)", task_id)
         try:
             # escalation_reason is no longer named here -- and no longer lost.
             # The merge preserves whatever the record already carried.
@@ -1992,8 +1992,8 @@ async def consolidation_status(user: User = Depends(require_full_auth)):
         # every other request stalled behind it, and the cost grew with the
         # file. _tail_lines seeks from the end instead.
         payload["tail"] = await asyncio.to_thread(_tail_lines, log, 40)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        logger.warning("consolidation status: log tail unreadable", exc_info=True)
     # What the scheduler knows: when it is next due, whether it is running
     # now, and whether a due run is waiting for the agent to go quiet.
     sched = jobs.status("consolidation")

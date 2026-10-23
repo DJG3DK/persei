@@ -165,7 +165,7 @@ def _declared_checks(repo_name: str) -> list[dict] | None:
     network), from the workspace root."""
     try:
         from agent.config import PROJECTS
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 -- no loadable config means no declared checks; the npm gate still runs
         return None
     declared = (PROJECTS.get(repo_name) or {}).get("checks")
     if not isinstance(declared, list) or not declared:

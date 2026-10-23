@@ -429,6 +429,7 @@ async def _push_https_origin(project: str) -> dict | None:
     try:
         token = github_settings.token_for(github_settings.current(), cfg_obj, project)
     except Exception:  # noqa: BLE001
+        logger.warning("review gate: token lookup failed for %s; using the config token", project, exc_info=True)
         token = getattr(cfg_obj, "github_token", None)
     if not token:
         return {"ok": False, "reason": "no GitHub token, so origin stays behind"}

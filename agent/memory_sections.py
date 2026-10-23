@@ -11,8 +11,8 @@ still true, plus what is new.
 
 So memory becomes what skills already are here: a small always-resident part
 plus an index of what can be fetched. The operator's rule for which is which
-(designs/ALWAYS_POLICY.md) is implemented in `stays_always` below, and the
-reasoning for it is worth keeping next to the code, because it is not the
+is implemented in `stays_always` below, and the reasoning for it is worth
+keeping next to the code, because it is not the
 obvious rule.
 
 Everything here is text in, text out -- no store, no backend, no IO. The

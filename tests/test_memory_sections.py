@@ -6,7 +6,7 @@ for byte. If that ever stops being true, a nightly consolidation writes a
 memory that loses a paragraph nobody can name, and no other test in this
 suite would notice.
 
-The rest of this file is the operator's policy (designs/ALWAYS_POLICY.md)
+The rest of this file is the operator's policy (`stays_always` in agent/memory_sections.py)
 asserted against a memory shaped like a real one -- what gets pinned, what
 gets indexed, and whether an index entry says anything a title does not.
 """

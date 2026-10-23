@@ -1052,7 +1052,7 @@ def forced_screen_block(user: User) -> str | None:
 
 async def require_full_auth(user: User = Depends(get_current_user)) -> User:
     # Both forced-screen flags are enforced server-side here, not only via
-    # the frontend routing app.tsx does for the
+    # the frontend routing App.tsx does for the
     # same two flags -- a session cookie alone would otherwise be enough to
     # reach every real endpoint directly, skipping both forced screens
     # entirely (the same "nginx allows all IPs" reasoning that makes

@@ -203,5 +203,6 @@ async def memory_with_freshness(project_backend, memory_text: str) -> str:
         r = await project_backend.aread(STALE_PATH)
         block = file_data_to_string(r.file_data).strip() if r.error is None and r.file_data else ""
     except Exception:  # noqa: BLE001
+        logger.warning("stale-memory flags unreadable; prompt goes without them", exc_info=True)
         block = ""
     return f"{memory_text}\n\n{block}" if block else memory_text

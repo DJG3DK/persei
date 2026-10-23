@@ -86,7 +86,7 @@ def _run(cmd: list[str], cwd: str) -> str:
     try:
         out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=60)
         return out.stdout.strip()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- see the docstring: a missing section beats no map
         return ""
 
 

@@ -218,7 +218,7 @@ async def _run_browse_page(url: str, want_screenshot: bool, question: str,
         title = await page.title()
         try:
             text = (await page.inner_text("body")).strip()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- a page with no readable body still has its title
             text = ""
         if len(text) > _PAGE_TEXT_CAP:
             text = text[:_PAGE_TEXT_CAP] + f"\n... [truncated, {len(text) - _PAGE_TEXT_CAP} more chars]"
@@ -265,7 +265,7 @@ async def _page_links(page) -> list[str]:
     try:
         raw = await page.eval_on_selector_all(
             "a[href]", "els => els.map(e => [(e.innerText || e.getAttribute('aria-label') || '').trim(), e.href])")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 -- see the docstring: the text still comes back
         return []
     here = (urlparse(page.url).hostname or "").lower()
     seen: set[str] = set()
