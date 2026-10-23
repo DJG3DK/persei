@@ -1,0 +1,169 @@
+name: Windows upgrade
+
+# A Tektonix install upgraded by this tree's installer, on a real Windows.
+#
+# D28 (2026-10-22): until 0.9.4 the app was called Tektonix, and the
+# installer's hooks (app/src-tauri/windows/hooks.nsh) uninstall it silently
+# before installing Persei, then make the shortcuts the updater's /UPDATE
+# mode does not. The first version of that left every auto-updated copy
+# with no way to start the app, and all that covered it was
+# tests/test_windows_installer_hooks.py, which compiles the hooks against a
+# stub of the template -- it never installs anything. This does: the
+# published Tektonix 0.9.3 installer, then the new one over it, and then it
+# looks at what a user would see.
+#
+# Two callers, and neither needs a secret:
+#   * release.yml, after the Windows build and before publish, with the
+#     installer that build made (signed when signing is configured). A
+#     failure here keeps the draft a draft.
+#   * a pull request that touches the installer, or the Actions tab, which
+#     build an unsigned installer here. Signing is not what is under test,
+#     and a pull request never sees the signing secrets.
+
+on:
+  workflow_call:
+    inputs:
+      installer-artifact:
+        description: "Name of an artifact of the calling run holding the *_x64-setup.exe to test; empty builds one"
+        type: string
+        required: false
+        default: ""
+  pull_request:
+    paths:
+      - app/src-tauri/windows/**
+      - app/src-tauri/tauri.conf.json
+      - .github/workflows/windows-upgrade.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  upgrade:
+    name: Upgrade from Tektonix 0.9.3 (${{ matrix.mode }})
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # update: what the app's updater runs (/UPDATE makes no shortcuts of
+        # its own -- the case D28 broke). install: the new installer run by
+        # hand over the old app.
+        include:
+          - mode: update
+            args: /S /UPDATE
+          - mode: install
+            args: /S
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: inputs.installer-artifact == ''
+
+      # The installer under test: the calling run's, or one built here.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: inputs.installer-artifact != ''
+        with:
+          name: ${{ inputs.installer-artifact }}
+          path: new-installer
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: inputs.installer-artifact == ''
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        if: inputs.installer-artifact == ''
+        with:
+          toolchain: stable
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: inputs.installer-artifact == ''
+        with:
+          workspaces: app/src-tauri
+      - name: Build an unsigned installer
+        if: inputs.installer-artifact == ''
+        shell: bash
+        working-directory: app
+        run: |
+          npm ci
+          npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          mkdir -p ../new-installer
+          cp src-tauri/target/release/bundle/nsis/*_x64-setup.exe ../new-installer/
+
+      # By digest: this runs a downloaded executable, and a release asset
+      # can be replaced (0.9.3 predates immutable releases).
+      - name: Fetch the published Tektonix 0.9.3 installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v0.9.3 --repo DJG3DK/persei --pattern 'Tektonix_0.9.3_x64-setup.exe' --dir old-installer
+          $hash = (Get-FileHash old-installer/Tektonix_0.9.3_x64-setup.exe -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne 'ec2977055aae488be184cf3e7252339a7f764cc66b8568cc6ad51de225e2412d') {
+            throw "Tektonix_0.9.3_x64-setup.exe has sha256 $hash, not the one published"
+          }
+
+      - name: Install Tektonix 0.9.3
+        run: |
+          $p = Start-Process -FilePath old-installer/Tektonix_0.9.3_x64-setup.exe -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "the Tektonix installer exited $($p.ExitCode)" }
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Tektonix'
+          if (-not (Test-Path $key)) { throw "Tektonix installed no uninstall entry" }
+          $start = Join-Path ([Environment]::GetFolderPath('Programs')) 'Tektonix.lnk'
+          if (-not (Test-Path $start)) { throw "Tektonix made no Start menu shortcut: $start" }
+          $target = (New-Object -ComObject WScript.Shell).CreateShortcut($start).TargetPath
+          Write-Host "Tektonix installed: $target"
+          # The desktop half of POSTINSTALL runs only for a user who had a
+          # Tektonix desktop shortcut. Whether a silent install makes one
+          # depends on the Tauri version that built 0.9.3, so make sure the
+          # precondition holds rather than test nothing.
+          $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Tektonix.lnk'
+          if (-not (Test-Path $desk)) {
+            Write-Host "no Tektonix desktop shortcut after a silent install; making the one a user would have"
+            $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($desk)
+            $lnk.TargetPath = $target
+            $lnk.Save()
+          }
+          "OLD_EXE=$target" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install the new Persei over it (${{ matrix.args }})
+        env:
+          ARGS: ${{ matrix.args }}
+        run: |
+          $exe = @(Get-ChildItem new-installer -Filter '*_x64-setup.exe')
+          if ($exe.Count -ne 1) { throw "expected one installer, found: $($exe.Name -join ', ')" }
+          Write-Host "installing $($exe[0].Name) with $env:ARGS"
+          $p = Start-Process -FilePath $exe[0].FullName -ArgumentList $env:ARGS -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "the Persei installer exited $($p.ExitCode)" }
+
+      - name: What the user sees
+        run: |
+          $failed = @()
+          $shell = New-Object -ComObject WScript.Shell
+          $persei = Join-Path $env:LOCALAPPDATA 'Persei\persei.exe'
+          $uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+
+          if (Test-Path $persei) { Write-Host "ok   app binary: $persei" } else { $failed += "no app binary at $persei" }
+
+          foreach ($dir in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+            $lnk = Join-Path $dir 'Persei.lnk'
+            if (-not (Test-Path $lnk)) { $failed += "no shortcut at $lnk"; continue }
+            $target = $shell.CreateShortcut($lnk).TargetPath
+            if ($target -ieq $persei) { Write-Host "ok   $lnk -> $target" } else { $failed += "$lnk points at '$target', not $persei" }
+            $old = Join-Path $dir 'Tektonix.lnk'
+            if (Test-Path $old) { $failed += "the Tektonix shortcut is still there: $old" }
+          }
+
+          if (Test-Path "$uninstall\Tektonix") { $failed += "the Tektonix uninstall entry is still there" } else { Write-Host "ok   Tektonix uninstall entry gone" }
+          if (Test-Path "$uninstall\Persei") {
+            $entry = Get-ItemProperty "$uninstall\Persei"
+            Write-Host "ok   Persei uninstall entry: $($entry.DisplayName) $($entry.DisplayVersion)"
+            if (-not $entry.UninstallString) { $failed += "the Persei uninstall entry has no UninstallString" }
+          } else { $failed += "no Persei uninstall entry" }
+
+          if ($env:OLD_EXE -and (Test-Path $env:OLD_EXE)) { $failed += "the Tektonix binary is still installed: $env:OLD_EXE" }
+
+          if ($failed.Count) {
+            $failed | ForEach-Object { Write-Host "::error::$_" }
+            Get-ChildItem ([Environment]::GetFolderPath('Programs')), ([Environment]::GetFolderPath('Desktop')) -Filter *.lnk | Format-Table FullName
+            Get-ChildItem $uninstall | Format-Table Name
+            exit 1
+          }
