@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 
 import agent.server as srv
 from agent import github_inbox as gi
-from agent import rate_limit
 
 
 @pytest.fixture
@@ -23,8 +22,6 @@ def client(monkeypatch):
     fake = dataclasses.replace(srv.config, auth_secret_key=key)
     monkeypatch.setattr(srv, "config", fake)
     monkeypatch.setattr(srv.app.state, "config", fake)
-    monkeypatch.setattr(rate_limit, "_attempts", type(rate_limit._attempts)(list))
-    monkeypatch.setattr(rate_limit, "_locked_until", {})
     acted = []
 
     async def act(app, repo, key, action, nonce=None):

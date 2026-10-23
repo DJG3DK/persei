@@ -151,3 +151,16 @@ def _tool_events_off_the_live_log(tmp_path, monkeypatch):
     (2026-10-01). A test that wants its own file still sets LOG_PATH itself."""
     from agent import tool_events
     monkeypatch.setattr(tool_events, "LOG_PATH", tmp_path / "tool_events.jsonl")
+
+
+@pytest.fixture(autouse=True)
+def _rate_limiter_in_tmp(tmp_path):
+    """The sign-in brake counts in the database (agent/rate_limit.py) and
+    refuses with 503 when none is installed. The server installs one at
+    startup, which a TestClient without a lifespan never reaches; every test
+    gets a fresh SQLite one instead, so no count leaks between tests."""
+    from agent import rate_limit
+    previous = rate_limit.installed()
+    rate_limit.install(rate_limit.SqliteAttempts(tmp_path / "rate_limits.db"))
+    yield
+    rate_limit.install(previous)

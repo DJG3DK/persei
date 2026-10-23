@@ -317,10 +317,9 @@ Treat an alert link like the alert: it is for the person it was sent to.
   account from one address locks that account's sign-in from there for five
   minutes; a success clears only its own account's misses. One address also
   has a looser limit across every account.
-- **Login rate limits live in the process's memory.** They reset on restart,
-  and would multiply by the worker count if the API ran more than one
-  (`agent/rate_limit.py` says what raising that requires). If the limiter
-  itself fails, it lets the request through and logs that it did.
+- **Login rate limits live in the database.** A restart keeps a lockout, and
+  every API worker counts against the same window. If the limiter cannot
+  reach the database it refuses the request with 503 and logs that it did.
 
 ## Deploying this safely
 

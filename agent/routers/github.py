@@ -209,8 +209,10 @@ async def github_approve_submit(request: Request):
         return _approve_html("<h1>Not done</h1><p class=err>This link must be confirmed from its own "
                              "page. Open it again and press the button there.</p>", 403)
     try:
-        rate_limit.check_rate_limit(request, "github-approve")
-    except HTTPException:
+        await rate_limit.check_rate_limit(request, "github-approve")
+    except HTTPException as e:
+        if e.status_code != 429:
+            raise
         return _approve_html("<h1>Slow down</h1><p class=err>Too many attempts from here. "
                              "Try again in a few minutes.</p>", 429)
     form = await request.form()
