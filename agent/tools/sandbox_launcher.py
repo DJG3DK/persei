@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
 import httpx
 
@@ -63,7 +64,7 @@ def _key() -> str:
     return ""
 
 
-async def call(path: str, body: dict | None = None, timeout: float = 60) -> dict:
+async def call(path: str, body: dict[str, Any] | None = None, timeout: float = 60) -> dict[str, Any]:
     """One request; the answer's JSON, or LauncherError with the reason."""
     key = _key()
     if not key:
@@ -78,7 +79,7 @@ async def call(path: str, body: dict | None = None, timeout: float = 60) -> dict
     except httpx.HTTPError as e:
         raise LauncherError(f"the sandbox launcher did not answer: {type(e).__name__}: {e}") from e
     try:
-        data = r.json()
+        data: dict[str, Any] = r.json()
     except ValueError:
         data = {}
     if r.status_code != 200:
@@ -92,11 +93,11 @@ async def call(path: str, body: dict | None = None, timeout: float = 60) -> dict
 _FIXED_WITH_VALUE = {"--memory", "--memory-swap", "--cpus", "--pids-limit", "--cap-drop", "--security-opt"}
 
 
-def spec_from_run_argv(argv: list[str]) -> dict:
+def spec_from_run_argv(argv: list[str]) -> dict[str, Any]:
     """The launcher request for a `docker run` argv this codebase built."""
     if argv[:2] != ["docker", "run"]:
         raise ValueError(f"not a docker run argv: {argv[:2]}")
-    spec: dict = {"env": {}, "mounts": [], "cap_add": []}
+    spec: dict[str, Any] = {"env": {}, "mounts": [], "cap_add": []}
     i = 2
     while i < len(argv):
         a = argv[i]
@@ -139,7 +140,7 @@ def spec_from_run_argv(argv: list[str]) -> dict:
     return spec
 
 
-def _mount(v: str) -> dict:
+def _mount(v: str) -> dict[str, Any]:
     readonly = v.endswith(":ro")
     if readonly:
         v = v[:-3]
@@ -149,7 +150,7 @@ def _mount(v: str) -> dict:
     return {"source": source, "target": target, "readonly": readonly}
 
 
-def _publish(v: str) -> dict:
+def _publish(v: str) -> dict[str, Any]:
     parts = v.split(":")
     if len(parts) != 3 or parts[0] != "127.0.0.1":
         raise ValueError(f"only a loopback publish is supported, not {v!r}")

@@ -567,7 +567,7 @@ async def run_shell_sandboxed(
     return {"ok": proc.returncode == 0, "exit_code": proc.returncode, "output": output[-20_000:]}
 
 
-async def _run_via_launcher(argv: list[str], name: str, cwd: str, image: str, cmd: str, timeout: int) -> dict:
+async def _run_via_launcher(argv: list[str], name: str, cwd: str, image: str, cmd: str, timeout: int) -> dict[str, Any]:
     """run_shell_sandboxed's tail in the bundle: the same argv, started by the
     sandbox launcher, with the same timeout and Stop handling."""
     try:

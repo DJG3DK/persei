@@ -1235,7 +1235,10 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict[str
     # legitimate, so none blocks -- and each is what a branch written to get
     # past a model reviewer would contain, so none merges unseen. A benchmark
     # has no operator to park for; its flags stay on the recorded verdict.
-    flags = [] if (PROJECTS.get(repo) or {}).get("benchmark") else list(review.get("flags") or [])
+    raw_flags = review.get("flags")
+    flags: list[dict[str, Any]] = (
+        [] if (PROJECTS.get(repo) or {}).get("benchmark") or not isinstance(raw_flags, list)
+        else [f for f in cast(list[Any], raw_flags) if isinstance(f, dict)])
     if (state.get("require_merge_review") or flags) and state.get("merge_approved_sha") != sha:
         flagged = "".join(f"\n- {f.get('guard', 'flag')}: {f.get('file') or ''} {f.get('issue', '')}".rstrip()
                           for f in flags)
