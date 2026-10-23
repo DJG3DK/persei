@@ -105,6 +105,15 @@ async def test_a_password_change_works_before_the_passkey_table_exists(pool):
     assert await auth.change_password(pool, user["id"], "chosen-password-789") == 0
 
 
+
+async def test_a_password_change_keeps_only_the_session_that_made_it(pool):
+    user = await _user(pool)
+    mine = await auth.create_session(pool, user["id"])
+    other = await auth.create_session(pool, user["id"])
+    await auth.change_password(pool, user["id"], "chosen-password-789", keep_token=mine)
+    rows = await _execute(pool, "SELECT token_hash FROM agent_sessions WHERE user_id = %s", (user["id"],))
+    assert [r["token_hash"] for r in rows] == [auth._hash_token(mine)]
+
 async def test_the_code_that_finishes_enrolment_cannot_be_replayed_at_login(pool, monkeypatch):
     """B30 (2026-10-22): enrolment accepted a code from the next step but
     recorded the wall clock's, so the same code passed once more at login."""

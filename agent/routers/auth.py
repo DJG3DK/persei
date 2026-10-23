@@ -289,7 +289,8 @@ async def change_password_endpoint(request: Request, req: ChangePasswordRequest,
     error = auth.validate_password_strength(req.new_password)
     if error:
         raise HTTPException(400, error)
-    removed = await auth.change_password(request.app.state.auth_pool, user.id, req.new_password)
+    removed = await auth.change_password(request.app.state.auth_pool, user.id, req.new_password,
+                                         keep_token=request.cookies.get(auth.SESSION_COOKIE_NAME))
     return {"ok": True, "passkeys_removed": removed or 0}
 
 

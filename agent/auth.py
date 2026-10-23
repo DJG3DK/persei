@@ -672,10 +672,11 @@ async def delete_user(pool: AsyncConnectionPool, user_id: int) -> None:
         await conn.execute("DELETE FROM agent_users WHERE id = %s", (user_id,))
 
 
-async def change_password(pool: AsyncConnectionPool, user_id: int, new_password: str) -> int:
+async def change_password(pool: AsyncConnectionPool, user_id: int, new_password: str,
+                          keep_token: str | None = None) -> int:
     """Sets the password, and removes what the old one could have planted:
-    reset codes, every session, every passkey. Returns how many passkeys
-    went, so the caller can say so."""
+    reset codes, every session but `keep_token` (the one making the change),
+    every passkey. Returns how many passkeys went, so the caller can say so."""
     async with pool.connection() as conn:
         await conn.execute(
             "UPDATE agent_users SET password_hash = %s, must_change_password = FALSE WHERE id = %s",
@@ -700,7 +701,9 @@ async def change_password(pool: AsyncConnectionPool, user_id: int, new_password:
     # reset_password does. A password change is often a response to a suspected
     # compromise; leaving other sessions live defeats the point. This was the
     # asymmetry the audit flagged -- reset_password got it right, this did not.
-    await revoke_all_sessions(pool, user_id)
+    # The session making the change stays: revoking it too sent the operator
+    # back to Sign in straight after the forced first-login change.
+    await revoke_all_sessions(pool, user_id, keep_token=keep_token)
     return removed
 
 
@@ -737,9 +740,14 @@ async def revoke_session(pool: AsyncConnectionPool, token: str) -> None:
         await conn.execute("DELETE FROM agent_sessions WHERE token_hash = %s", (_hash_token(token),))
 
 
-async def revoke_all_sessions(pool: AsyncConnectionPool, user_id: int) -> None:
+async def revoke_all_sessions(pool: AsyncConnectionPool, user_id: int,
+                              keep_token: str | None = None) -> None:
     async with pool.connection() as conn:
-        await conn.execute("DELETE FROM agent_sessions WHERE user_id = %s", (user_id,))
+        if keep_token:
+            await conn.execute("DELETE FROM agent_sessions WHERE user_id = %s AND token_hash <> %s",
+                               (user_id, _hash_token(keep_token)))
+        else:
+            await conn.execute("DELETE FROM agent_sessions WHERE user_id = %s", (user_id,))
 
 
 # --- 2FA ---------------------------------------------------------------
