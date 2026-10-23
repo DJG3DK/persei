@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.9.5 — fixes from an audit
+
+A full outside review of the code turned up a few real problems and a lot of
+small ones. This fixes all of them.
+
+- **Windows:** if Tektonix updated itself to Persei, it left you with no
+  Start-menu shortcut. This update puts it back. Until you have it, the app is
+  in `%LOCALAPPDATA%\Persei\`.
+- **Linux (.deb):** the app no longer opens a browser tab every few hours to
+  say an update is out. It tells you in the app instead.
+- **The review gate** no longer waves through a brand-new failing test just
+  because main had a red test too, and a check that hangs is stopped and
+  reported as timed out instead of holding up every review behind it.
+- **Auto mode** asks again before a script piped into a shell, and before a
+  few more ways of throwing away work (git restore, stash drop, rsync
+  --delete, truncate).
+- **Sign-in:** failed logins are counted per account, passkeys only work on
+  the dashboard's own address, and changing your password or 2FA is now in
+  the audit log.
+- **The GitHub inbox** shows every item, not just the newest 200, and items no
+  longer come back after their fix lands.
+- **Releases** sign updates in a separate step, away from the build tools.
+
 ## v0.9.4 — Tektonix is now Persei
 
 Same agent, new name. Tektonix was one letter away from a company that got
