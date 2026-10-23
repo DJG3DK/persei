@@ -10,6 +10,7 @@ import re
 import subprocess
 import warnings
 from pathlib import Path
+from typing import Any
 
 from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
@@ -18,6 +19,7 @@ from langchain.agents.middleware import (
     TodoListMiddleware,
 )
 from langchain_core.tools import tool
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 
 from deepagents import FilesystemPermission, create_deep_agent
@@ -1133,7 +1135,7 @@ async def build_deep_agent(
     config: Config,
     repo: str,
     budget_usd: float,
-    checkpointer,
+    checkpointer: BaseCheckpointSaver[Any] | None,
     store: BaseStore,
     starting_cost: float = 0.0,
     starting_last_failed_edit: str | None = None,

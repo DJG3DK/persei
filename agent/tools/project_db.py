@@ -38,10 +38,11 @@ for a database credential to sit and go stale.
 
 import re
 from pathlib import Path
+from typing import Any, LiteralString, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from agent.config import PROJECTS
 
@@ -98,12 +99,12 @@ def _strip_orm_params(dsn: str) -> str:
     return urlunsplit(parts._replace(query=urlencode(kept)))
 
 
-def _render(columns: list[str], rows: list[tuple]) -> str:
+def _render(columns: list[str], rows: list[tuple[Any, ...]]) -> str:
     if not rows:
         return "(0 rows)"
     lines = [" | ".join(columns)]
     for row in rows:
-        cells = []
+        cells: list[str] = []
         for value in row:
             text = "NULL" if value is None else str(value)
             if len(text) > MAX_CELL_CHARS:
@@ -113,7 +114,7 @@ def _render(columns: list[str], rows: list[tuple]) -> str:
     return "\n".join(lines)
 
 
-def make_project_db_tool(repo: str):
+def make_project_db_tool(repo: str) -> BaseTool | None:
     """Returns a `query_db` tool bound to one project, or None when that
     project has no database configured (the tool is simply not offered,
     rather than offered and always failing)."""
@@ -160,8 +161,12 @@ def make_project_db_tool(repo: str):
             async with await psycopg.AsyncConnection.connect(dsn, connect_timeout=10) as conn:
                 # READ ONLY is what actually enforces this, not the regex above.
                 await conn.execute("SET TRANSACTION READ ONLY")
-                await conn.execute(f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}")
-                cursor = await conn.execute(statement)
+                # psycopg wants a literal query string. Both of these are
+                # built at runtime on purpose: the first from a module
+                # constant, the second is the model's own SQL, which is what
+                # this tool exists to run (READ ONLY above is the guard).
+                await conn.execute(cast(LiteralString, f"SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}"))
+                cursor = await conn.execute(cast(LiteralString, statement))
                 columns = [d.name for d in (cursor.description or [])]
                 rows = await cursor.fetchmany(MAX_ROWS + 1)
         except Exception as e:  # noqa: BLE001 -- the model needs the real error text to fix its SQL

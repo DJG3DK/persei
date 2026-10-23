@@ -23,7 +23,9 @@ import html
 import logging
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
@@ -56,7 +58,7 @@ def format_results(query: str, results: list[Result], source: str) -> str:
     if not results:
         return (f"No results for {query!r} ({source}). The search itself worked; try different words "
                 f"rather than guessing page addresses.")
-    lines = []
+    lines: list[str] = []
     for i, r in enumerate(results, start=1):
         snippet = " ".join(r.snippet.split())
         if len(snippet) > _SNIPPET_CHARS:
@@ -70,15 +72,21 @@ def _router() -> tuple[str, str]:
             os.environ.get("MODEL_ROUTER_KEY", ""))
 
 
-def parse_citations(payload: dict, limit: int) -> list[Result]:
+def parse_citations(payload: dict[str, Any], limit: int) -> list[Result]:
     """OpenRouter's `url_citation` annotations, de-duplicated by URL."""
     out: list[Result] = []
     seen: set[str] = set()
-    for choice in payload.get("choices") or []:
-        for ann in (choice.get("message") or {}).get("annotations") or []:
-            c = ann.get("url_citation") if isinstance(ann, dict) else None
+    choices: list[Any] = payload.get("choices") or []
+    for choice in choices:
+        message: dict[str, Any] = choice.get("message") or {}
+        annotations: list[Any] = message.get("annotations") or []
+        for ann in annotations:
+            if not isinstance(ann, dict):
+                continue
+            c = cast(dict[str, Any], ann).get("url_citation")
             if not isinstance(c, dict):
                 continue
+            c = cast(dict[str, Any], c)
             url = str(c.get("url") or "").strip()
             if not url.startswith(("http://", "https://")) or url in seen:
                 continue
@@ -89,7 +97,7 @@ def parse_citations(payload: dict, limit: int) -> list[Result]:
     return out
 
 
-async def _via_router(query: str, n: int, metadata: dict | None) -> list[Result]:
+async def _via_router(query: str, n: int, metadata: dict[str, Any] | None) -> list[Result]:
     base, key = _router()
     if not key:
         raise RuntimeError("no router key")
@@ -145,7 +153,7 @@ def parse_ddg(page: str, limit: int) -> list[Result]:
         url = _ddg_target(m.group("href"))
         if not url.startswith(("http://", "https://")) or _is_ddg_ad(url):
             continue
-        strip = lambda s: html.unescape(re.sub(r"<[^>]+>", "", s or "")).strip()  # noqa: E731
+        strip: Callable[[str | None], str] = lambda s: html.unescape(re.sub(r"<[^>]+>", "", s or "")).strip()  # noqa: E731
         out.append(Result(strip(m.group("title")), url, strip(m.group("snippet"))))
         if len(out) >= limit:
             break
@@ -165,13 +173,13 @@ async def _via_duckduckgo(query: str, n: int) -> list[Result]:
     return results
 
 
-async def web_search(query: str, num_results: int = 6, *, metadata: dict | None = None) -> str:
+async def web_search(query: str, num_results: int = 6, *, metadata: dict[str, Any] | None = None) -> str:
     """Search the web; the text a model reads. Never raises."""
     query = (query or "").strip()
     if not query:
         return "ERROR: an empty query"
     n = max(1, min(int(num_results or 6), MAX_RESULTS))
-    reasons = []
+    reasons: list[str] = []
     try:
         results = await _via_router(query, n, metadata)
         if results:

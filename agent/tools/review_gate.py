@@ -11,6 +11,7 @@ import os
 import shlex
 import subprocess
 import sys
+from typing import Any, cast
 
 import httpx
 
@@ -85,7 +86,7 @@ _CONTROL_HEADERS = (
 )
 
 
-async def trigger_check(project: str, branch: str | None = None) -> dict:
+async def trigger_check(project: str, branch: str | None = None) -> dict[str, Any]:
     """Ask the review service to review now -- and, where known, WHICH branch.
 
     The reviewer holds one review unit per project and, left to itself, picks
@@ -106,11 +107,11 @@ async def trigger_check(project: str, branch: str | None = None) -> dict:
 
 # Cached because the settings page and every poll ask the same question, and
 # the answer changes only when someone edits a project's configuration.
-_CHECKS_CACHE: dict[str, tuple[float, dict]] = {}
+_CHECKS_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _CHECKS_TTL_S = 60
 
 
-async def project_checks(force: bool = False) -> dict[str, dict]:
+async def project_checks(force: bool = False) -> dict[str, dict[str, Any]]:
     """How many checks each project runs, by name, from the reviewer.
 
     The agent cannot answer this itself: `checks` live in projects.json's
@@ -129,7 +130,7 @@ async def project_checks(force: bool = False) -> dict[str, dict]:
         if r.status_code != 200:
             logger.warning("project_checks: reviewer answered %s", r.status_code)
             return {}
-        projects = r.json().get("projects") or {}
+        projects: dict[str, dict[str, Any]] = r.json().get("projects") or {}
     except Exception as e:  # noqa: BLE001 -- unreachable is a "cannot confirm", not a crash
         logger.warning("project_checks: reviewer unreachable (%s)", str(e)[:120])
         return {}
@@ -162,7 +163,7 @@ def _reviewed_sha_is(got: str | None, expect: str) -> bool:
     return got == expect
 
 
-def branch_verdict(project_state: dict | None, branch: str | None) -> dict | None:
+def branch_verdict(project_state: dict[str, Any] | None, branch: str | None) -> dict[str, Any] | None:
     """One branch's own last verdict out of a project's review record.
 
     Since 2026-09-23 the reviewer keeps a record per branch
@@ -173,7 +174,8 @@ def branch_verdict(project_state: dict | None, branch: str | None) -> dict | Non
     the latest review, as before."""
     if not project_state or not branch:
         return project_state
-    rec = (project_state.get("branches") or {}).get(branch)
+    branches: dict[str, Any] = project_state.get("branches") or {}
+    rec: dict[str, Any] | None = branches.get(branch)
     if rec:
         return rec
     if project_state.get("branch") == branch:
@@ -181,7 +183,7 @@ def branch_verdict(project_state: dict | None, branch: str | None) -> dict | Non
     return None
 
 
-async def _read_project(project: str) -> dict | None:
+async def _read_project(project: str) -> dict[str, Any] | None:
     """The reviewer's whole record for a project: the latest verdict, the
     per-branch verdicts, and `inProgress` while it is reviewing."""
     async with httpx.AsyncClient(timeout=15) as client:
@@ -191,11 +193,11 @@ async def _read_project(project: str) -> dict | None:
         return r.json().get(project)
 
 
-async def _read_state(project: str, branch: str | None = None) -> dict | None:
+async def _read_state(project: str, branch: str | None = None) -> dict[str, Any] | None:
     return branch_verdict(await _read_project(project), branch)
 
 
-async def current_verdict(project: str, branch: str | None = None) -> dict | None | str:
+async def current_verdict(project: str, branch: str | None = None) -> dict[str, Any] | None | str:
     """The reviewer's record for this branch as it stands now: a dict, None
     when it holds none, or "unknown" when the service cannot be asked. The
     task's own copy of a verdict can be stale: an operator clears a branch's
@@ -219,11 +221,13 @@ async def _still_reviewing(project: str, expect_sha: str, branch: str | None = N
         record = await _read_project(project)
     except httpx.HTTPError:
         return None
-    progress = (record or {}).get("inProgress") or {}
+    record = record or {}
+    progress: dict[str, Any] = record.get("inProgress") or {}
     if _reviewed_sha_is(progress.get("sha"), expect_sha):
         return str(progress.get("step") or "reviewing")
-    queued = (record or {}).get("queued") or []
-    if branch and isinstance(queued, list) and branch in queued:
+    raw_queued: Any = record.get("queued") or []
+    queued = cast("list[Any]", raw_queued) if isinstance(raw_queued, list) else None
+    if branch and queued is not None and branch in queued:
         ahead = queued.index(branch) + (1 if progress.get("sha") else 0)
         if ahead == 0:
             return "next in the reviewer's queue"
@@ -238,19 +242,20 @@ async def _still_reviewing(project: str, expect_sha: str, branch: str | None = N
 STILL_REVIEWING_FACTOR = 4
 
 
-def harness_failed(state: dict) -> bool:
+def harness_failed(state: dict[str, Any]) -> bool:
     """True when the verdict blocked only because a check could not run: the
     reviewer marks such a check `infrastructure`. A READY record is never
     one, whatever its checks carry: the gate acted on it. The one Python
     copy of services/shared/review-records.js's harnessFailed; a second copy
     in verify_and_ship.py drifted without the verdict condition and made
     the merge path re-ask about a READY (2026-09-29)."""
-    checks = state.get("checkResults") or []
+    checks: list[Any] = state.get("checkResults") or []
+    results = [cast("dict[str, Any]", c) for c in checks if isinstance(c, dict)]
     return state.get("verdict") != "READY" and any(
-        isinstance(c, dict) and c.get("infrastructure") and not c.get("ok") for c in checks)
+        c.get("infrastructure") and not c.get("ok") for c in results)
 
 
-def _reviewed_after(state: dict, after: float | None) -> bool:
+def _reviewed_after(state: dict[str, Any], after: float | None) -> bool:
     """False when a HARNESS-FAILED record predates `after` (a unix time): a
     re-review asked for after the harness was fixed must wait for the new
     verdict, not read the failure back. A real verdict counts whatever its
@@ -272,7 +277,7 @@ def _reviewed_after(state: dict, after: float | None) -> bool:
 
 
 async def wait_for_review(project: str, expect_sha: str, timeout: int = 900, poll_interval: int = 5,
-                          branch: str | None = None, after: float | None = None) -> dict:
+                          branch: str | None = None, after: float | None = None) -> dict[str, Any]:
     """Polls until the review service has reviewed `expect_sha` specifically,
     not just any review -- a stale result for an older sha would otherwise
     silently pass a since-changed diff. Raises TimeoutError past `timeout`,
@@ -306,7 +311,7 @@ async def wait_for_review(project: str, expect_sha: str, timeout: int = 900, pol
         elapsed += poll_interval
 
 
-async def merge_and_deploy(project: str, branch: str | None = None) -> dict:
+async def merge_and_deploy(project: str, branch: str | None = None) -> dict[str, Any]:
     """Only called after wait_for_review returns a ready verdict. Not
     re-verified here: the review service's own merge endpoint re-gates on
     current review state server-side, so a stale or incorrect call fails
@@ -387,7 +392,7 @@ async def merge_and_deploy(project: str, branch: str | None = None) -> dict:
         return out
 
 
-async def _push_https_origin_if_needed(project: str) -> dict | None:
+async def _push_https_origin_if_needed(project: str) -> dict[str, Any] | None:
     """Push the base branch to an https origin the review service could not.
 
     None when there is nothing to do: no origin, an SSH origin (a deploy key
@@ -403,8 +408,10 @@ async def _push_https_origin_if_needed(project: str) -> dict | None:
                                        f"the merge itself succeeded"}
 
 
-async def _push_https_origin(project: str) -> dict | None:
+async def _push_https_origin(project: str) -> dict[str, Any] | None:
     from agent.config import PROJECTS, load_config  # noqa: PLC0415
+# pyright: reportPrivateUsage=false
+    # git.py's _git runner is shared on purpose: one place sets the env and timeout for every git call.
     from agent.tools.git import _git, token_credential_args, token_env  # noqa: PLC0415
     from agent import github_settings  # noqa: PLC0415
 
@@ -511,7 +518,7 @@ def _workflow_scope_hint(token: str | None, slug: str, branch: str) -> str:
     )
 
 
-async def ship_as_pull_request(project: str, branch: str, sha: str, title: str) -> dict:
+async def ship_as_pull_request(project: str, branch: str, sha: str, title: str) -> dict[str, Any]:
     """Push the task branch and open a pull request against the base branch.
 
     The other way to ship, for a project whose base branch the agent is not
@@ -627,7 +634,7 @@ async def ship_as_pull_request(project: str, branch: str, sha: str, title: str) 
 
 
 async def push_to_github(live: str, origin: str, slug: str, refspec: str, token: str,
-                         name: str | None = None) -> dict:
+                         name: str | None = None) -> dict[str, Any]:
     """Push one refspec to the project's GitHub origin: {"ok": True} or
     {"ok": False, "error": ..., ["reason", "git"]}.
 

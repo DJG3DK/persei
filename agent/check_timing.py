@@ -20,6 +20,10 @@ from __future__ import annotations
 import logging
 import statistics
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from langgraph.store.base import BaseStore
 
 logger = logging.getLogger("tektonix")
 
@@ -29,7 +33,7 @@ NAMESPACE = ("check_timing",)
 KEEP = 10
 
 
-async def record(store, repo: str, seconds: float) -> None:
+async def record(store: BaseStore | None, repo: str, seconds: float) -> None:
     """Remember one completed check run."""
     if store is None or not repo or seconds <= 0:
         return
@@ -42,7 +46,7 @@ async def record(store, repo: str, seconds: float) -> None:
         logger.debug("check timing not recorded for %s: %s", repo, e)
 
 
-async def expected_seconds(store, repo: str) -> float | None:
+async def expected_seconds(store: BaseStore | None, repo: str) -> float | None:
     """The median of recent runs, or None before there are any.
 
     None is a real answer and the caller must handle it: the first run on a

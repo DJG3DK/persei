@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -244,7 +245,7 @@ async def _try_hold(name: str, dsn: str | None):
 
 @asynccontextmanager
 async def project_slot(repo: str, dsn: str | None = None, *, slots: int = 1,
-                       on_wait=None, scope: str = "task"):
+                       on_wait: Callable[[], Awaitable[object]] | None = None, scope: str = "task"):
     """Hold one of `slots` places on this project; yields the slot's number.
 
     With slots=1 this IS project_lock -- same key, same waiting -- so an

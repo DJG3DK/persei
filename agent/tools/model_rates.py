@@ -33,6 +33,7 @@ own billed cost wherever it can be had (see router_ledger.py).
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import os
 
@@ -111,11 +112,11 @@ def _table() -> dict[str, dict[str, float]]:
     return _rates
 
 
-def _pricing_of(entry: dict) -> dict[str, float] | None:
+def _pricing_of(entry: dict[str, Any]) -> dict[str, float] | None:
     """{"input", "output", "cache_read"} from one OpenRouter pricing block, or
     None when the base rates are missing or malformed. A missing cache-read
     price means "no discount", so cache reads bill at the input rate."""
-    pricing = entry.get("pricing") or {}
+    pricing: dict[str, Any] = entry.get("pricing") or {}
     try:
         rates = {"input": float(pricing["prompt"]), "output": float(pricing["completion"])}
         cache_read = pricing.get("input_cache_read")
@@ -158,7 +159,8 @@ def _fetch_endpoint_rates(model_id: str) -> dict[str, float] | None:
     try:
         resp = httpx.get(OPENROUTER_ENDPOINTS_URL.format(model_id=model_id), timeout=10)
         resp.raise_for_status()
-        endpoints = (resp.json().get("data") or {}).get("endpoints") or []
+        data: dict[str, Any] = resp.json().get("data") or {}
+        endpoints: list[dict[str, Any]] = data.get("endpoints") or []
     except Exception as e:  # noqa: BLE001
         logger.warning("OpenRouter endpoint pricing fetch failed for %s: %s", model_id, e)
         return None
@@ -186,9 +188,9 @@ def _load_rates() -> dict[str, dict[str, float]]:
     catalog = _fetch_catalog_rates()
     drift_reported: set[str] = set()  # one warning per raw id, however many aliases pin it
     for entry in cfg.get("model_list", []):
-        params = entry.get("params") or entry.get("litellm_params") or {}
-        model_info = entry.get("model_info") or {}
-        raw = params.get("model", "")
+        params: dict[str, Any] = entry.get("params") or entry.get("litellm_params") or {}
+        model_info: dict[str, Any] = entry.get("model_info") or {}
+        raw: str = params.get("model", "")
         stripped = raw.split("/", 1)[1] if raw.startswith("openrouter/") else raw
         input_cost = model_info.get("input_cost_per_token")
         output_cost = model_info.get("output_cost_per_token")

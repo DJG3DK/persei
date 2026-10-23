@@ -43,10 +43,12 @@ import secrets
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from types import MappingProxyType
 from typing import Any
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 
 import httpx
+from langgraph.store.base import BaseStore
 
 from agent import github_settings
 from agent import audit
@@ -67,6 +69,11 @@ DEPENDABOT = "dependabot[bot]"
 # morning; short enough that a leaked old message is not a standing key.
 APPROVAL_TTL_S = 48 * 3600
 
+# What a missing or null nested GitHub object reads as: `(pr.get("user") or
+# _NOTHING).get("login")`. Read-only, so sharing one is safe, and typed, so
+# the reads through it stay typed where a bare `{}` would not.
+_NOTHING: Mapping[str, Any] = MappingProxyType({})
+
 
 # ---------------------------------------------------------------------------
 # GitHub client -- async, thin, and the one thing tests replace
@@ -80,7 +87,7 @@ class GitHubClient:
             "X-GitHub-Api-Version": "2022-11-28",
         }
 
-    async def get(self, path: str, params: dict | None = None) -> Any:
+    async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             r = await client.get(f"{API}{path}", headers=self._headers, params=params)
         if r.status_code == 404:
@@ -90,16 +97,16 @@ class GitHubClient:
         r.raise_for_status()
         return r.json()
 
-    async def repo(self, slug: str) -> dict:
+    async def repo(self, slug: str) -> dict[str, Any]:
         return await self.get(f"/repos/{slug}")
 
-    async def open_prs(self, slug: str) -> list[dict]:
+    async def open_prs(self, slug: str) -> list[dict[str, Any]]:
         return await self.get(f"/repos/{slug}/pulls", {"state": "open", "per_page": 50, "sort": "updated", "direction": "desc"})
 
-    async def reviews(self, slug: str, number: int) -> list[dict]:
+    async def reviews(self, slug: str, number: int) -> list[dict[str, Any]]:
         return await self.get(f"/repos/{slug}/pulls/{number}/reviews", {"per_page": 50})
 
-    async def dependabot_alerts(self, slug: str) -> list[dict]:
+    async def dependabot_alerts(self, slug: str) -> list[dict[str, Any]]:
         return await self.get(f"/repos/{slug}/dependabot/alerts", {"state": "open", "per_page": 50})
 
     async def last_scan_at(self, slug: str) -> float | None:
@@ -116,11 +123,11 @@ class GitHubClient:
         except ValueError:
             return None
 
-    async def code_scanning_alerts(self, slug: str) -> list[dict]:
+    async def code_scanning_alerts(self, slug: str) -> list[dict[str, Any]]:
         """Open code scanning (CodeQL etc.) alerts. A first full analysis can
         produce a few hundred; three pages is the ceiling before the inbox
         stops being an inbox."""
-        out: list[dict] = []
+        out: list[dict[str, Any]] = []
         for page in (1, 2, 3):
             batch = await self.get(f"/repos/{slug}/code-scanning/alerts", {"state": "open", "per_page": 100, "page": page})
             out.extend(batch)
@@ -128,11 +135,11 @@ class GitHubClient:
                 break
         return out
 
-    async def check_runs(self, slug: str, ref: str) -> list[dict]:
+    async def check_runs(self, slug: str, ref: str) -> list[dict[str, Any]]:
         data = await self.get(f"/repos/{slug}/commits/{ref}/check-runs", {"per_page": 50})
         return data.get("check_runs") or []
 
-    async def workflow_runs(self, slug: str, branch: str) -> list[dict]:
+    async def workflow_runs(self, slug: str, branch: str) -> list[dict[str, Any]]:
         """GitHub Actions runs on a branch, newest first. Needs "Actions: read"
         where check_runs needs "Checks: read"; a fine-grained token may have
         either, so ci_failures tries both."""
@@ -166,9 +173,9 @@ class Item:
     # Earlier tasks on this item that finished and merged without GitHub
     # dropping it: [{"task_id", "finished_at", "still_open"}]. Shown on the
     # item and written into the next task's goal.
-    attempts: list = field(default_factory=list)
+    attempts: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -177,13 +184,13 @@ class Item:
 _OWN_BRANCH = re.compile(r"^agent/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:-|$)")
 
 
-def _opened_by_tektonix(pr: dict) -> bool:
+def _opened_by_tektonix(pr: dict[str, Any]) -> bool:
     """A pull request Persei opened for one of its own tasks. Never an inbox
     item, whatever the author setting: with "anyone", the inbox offered each
     task's own PR back as a new task, which opened another PR for the next
     poll to offer ("Land the dependency update proposed in pull request #42
     (Land ... #37 ...)", 2026-09-30)."""
-    return bool(_OWN_BRANCH.match(str((pr.get("head") or {}).get("ref") or "")))
+    return bool(_OWN_BRANCH.match(str((pr.get("head") or _NOTHING).get("ref") or "")))
 
 
 # A pull request whose author is part of the repository. GitHub's own
@@ -192,7 +199,7 @@ def _opened_by_tektonix(pr: dict) -> bool:
 _INSIDE_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 
-def _review_author_allowed(pr: dict, policy: str) -> bool:
+def _review_author_allowed(pr: dict[str, Any], policy: str) -> bool:
     """Whose pull request a requested-changes review may turn into work.
     Review requests had no author filter: any outsider's PR with a review
     asking for changes became an inbox item, its body went into a task's
@@ -200,7 +207,7 @@ def _review_author_allowed(pr: dict, policy: str) -> bool:
     every later task's memory (audit A21, 2026-10-22). The project's author
     setting applies as it does to Dependabot PRs, and the repository's own
     people are always allowed -- their PRs are what reviews are mostly on."""
-    login = (pr.get("user") or {}).get("login")
+    login = (pr.get("user") or _NOTHING).get("login")
     return (_author_allowed(login, policy)
             or str(pr.get("author_association") or "").upper() in _INSIDE_ASSOCIATIONS)
 
@@ -214,15 +221,15 @@ def _author_allowed(login: str | None, policy: str) -> bool:
     return login == DEPENDABOT
 
 
-async def discover(client: GitHubClient, repo: str, slug: str, proj: dict) -> list[Item]:
+async def discover(client: GitHubClient, repo: str, slug: str, proj: dict[str, Any]) -> list[Item]:
     """Every current item for the sources this project has switched on.
     One source failing (a token without alert permission, say) is logged
     and does not hide the others."""
     policies = proj["policies"]
     items: list[Item] = []
-    prs: list[dict] | None = None
+    prs: list[dict[str, Any]] | None = None
 
-    async def _prs() -> list[dict]:
+    async def _prs() -> list[dict[str, Any]]:
         nonlocal prs
         if prs is None:
             prs = await client.open_prs(slug)
@@ -231,15 +238,15 @@ async def discover(client: GitHubClient, repo: str, slug: str, proj: dict) -> li
     if policies["dependabot_prs"] != "off":
         try:
             for pr in await _prs():
-                login = (pr.get("user") or {}).get("login")
+                login = (pr.get("user") or _NOTHING).get("login")
                 if _opened_by_tektonix(pr) or not _author_allowed(login, proj.get("authors", "dependabot")):
                     continue
-                head = (pr.get("head") or {}).get("sha") or ""
+                head = (pr.get("head") or _NOTHING).get("sha") or ""
                 items.append(Item(
                     key=f"pr:{pr['number']}", kind="dependabot_prs", repo=repo, number=pr["number"],
                     title=pr.get("title") or f"PR #{pr['number']}", url=pr.get("html_url") or "",
                     fingerprint=head[:12], author=login,
-                    summary=f"{login}: {(pr.get('head') or {}).get('ref')} -> {(pr.get('base') or {}).get('ref')}",
+                    summary=f"{login}: {(pr.get('head') or _NOTHING).get('ref')} -> {(pr.get('base') or _NOTHING).get('ref')}",
                 ))
         except Exception as e:  # noqa: BLE001
             logger.warning("github inbox: %s dependabot_prs failed: %s", repo, e)
@@ -252,20 +259,20 @@ async def discover(client: GitHubClient, repo: str, slug: str, proj: dict) -> li
                 reviews = await client.reviews(slug, pr["number"])
                 # The latest review per reviewer decides; an approval after a
                 # changes-requested review cancels it.
-                latest: dict[str, dict] = {}
+                latest: dict[str, dict[str, Any]] = {}
                 for r in reviews:
-                    who = (r.get("user") or {}).get("login") or "?"
+                    who = (r.get("user") or _NOTHING).get("login") or "?"
                     latest[who] = r
                 requesting = [r for r in latest.values() if r.get("state") == "CHANGES_REQUESTED"]
                 if not requesting:
                     continue
-                head = (pr.get("head") or {}).get("sha") or ""
-                reviewers = ", ".join(sorted((r.get("user") or {}).get("login") or "?" for r in requesting))
+                head = (pr.get("head") or _NOTHING).get("sha") or ""
+                reviewers = ", ".join(sorted((r.get("user") or _NOTHING).get("login") or "?" for r in requesting))
                 items.append(Item(
                     key=f"review:{pr['number']}", kind="review_requests", repo=repo, number=pr["number"],
                     title=pr.get("title") or f"PR #{pr['number']}", url=pr.get("html_url") or "",
                     fingerprint=f"{head[:12]}:{max(r.get('id', 0) for r in requesting)}",
-                    author=(pr.get("user") or {}).get("login"),
+                    author=(pr.get("user") or _NOTHING).get("login"),
                     summary=f"changes requested by {reviewers}",
                 ))
         except Exception as e:  # noqa: BLE001
@@ -302,12 +309,12 @@ _SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "error": 1, "
 _MAX_LOCATIONS_IN_SUMMARY = 12
 
 
-def _alert_severity(alert: dict) -> str:
-    rule = alert.get("rule") or {}
+def _alert_severity(alert: dict[str, Any]) -> str:
+    rule = alert.get("rule") or _NOTHING
     return str(rule.get("security_severity_level") or rule.get("severity") or "unknown").lower()
 
 
-def _version_key(v: str) -> tuple:
+def _version_key(v: str) -> tuple[int, Any]:
     try:
         from packaging.version import Version  # noqa: PLC0415 -- optional in the CLI install
         return (0, Version(v))
@@ -315,7 +322,7 @@ def _version_key(v: str) -> tuple:
         return (1, v)
 
 
-def security_alert_items(alerts: list[dict], repo: str, slug: str) -> list[Item]:
+def security_alert_items(alerts: list[dict[str, Any]], repo: str, slug: str) -> list[Item]:
     """One item per package and manifest, not per alert. Eleven undici
     advisories on one lockfile are one bump (to the highest first-patched
     version among them), and on 2026-09-29 they became eleven tasks: one
@@ -332,12 +339,12 @@ def security_alert_items(alerts: list[dict], repo: str, slug: str) -> list[Item]
     `alert:5`, and a group shrinking to one alert started `alert:9` at once,
     with no settle wait and no record of the attempt (audit B36,
     2026-10-22). poll_project moves an old `alert:<n>` row to its new key."""
-    groups: dict[tuple[str, str], list[dict]] = {}
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for a in alerts:
         if a.get("state") not in (None, "open"):
             continue
-        dep = a.get("dependency") or {}
-        pkg = (dep.get("package") or {}).get("name") or "?"
+        dep = a.get("dependency") or _NOTHING
+        pkg = (dep.get("package") or _NOTHING).get("name") or "?"
         groups.setdefault((pkg, dep.get("manifest_path") or "?"), []).append(a)
     items: list[Item] = []
     for (pkg, manifest), group in groups.items():
@@ -345,33 +352,33 @@ def security_alert_items(alerts: list[dict], repo: str, slug: str) -> list[Item]
         key = "alerts:" + re.sub(r"[^A-Za-z0-9._@-]", "-", f"{pkg}@{manifest}".replace("/", "."))
         if len(group) == 1:
             a = group[0]
-            adv = a.get("security_advisory") or {}
-            vuln = a.get("security_vulnerability") or {}
+            adv = a.get("security_advisory") or _NOTHING
+            vuln = a.get("security_vulnerability") or _NOTHING
             sev = (adv.get("severity") or "?").upper()
             items.append(Item(
                 key=key, kind="security_alerts", repo=repo, number=a["number"],
                 title=f"[{sev}] {pkg}: {adv.get('summary') or 'security alert'}",
                 url=a.get("html_url") or "", fingerprint=f"{a.get('state')}:{adv.get('ghsa_id')}",
                 summary=f"{pkg} {vuln.get('vulnerable_version_range') or ''} -> patched in "
-                        f"{(vuln.get('first_patched_version') or {}).get('identifier') or '?'} ({manifest})",
+                        f"{(vuln.get('first_patched_version') or _NOTHING).get('identifier') or '?'} ({manifest})",
             ))
             continue
-        sev = min((((a.get("security_advisory") or {}).get("severity") or "low").lower() for a in group),
+        sev = min((((a.get("security_advisory") or _NOTHING).get("severity") or "low").lower() for a in group),
                   key=lambda x: _SEVERITY_RANK.get(x, 9))
-        patched = [((a.get("security_vulnerability") or {}).get("first_patched_version") or {}).get("identifier")
+        patched = [((a.get("security_vulnerability") or _NOTHING).get("first_patched_version") or _NOTHING).get("identifier")
                    for a in group]
         patched = [v for v in patched if v]
         target = max(patched, key=_version_key) if patched else "?"
         lines = [f"{pkg} in {manifest}: bump to at least {target} (the highest first-patched version among "
                  f"these {len(group)} open alerts)"]
         for a in group:
-            adv = a.get("security_advisory") or {}
-            vuln = a.get("security_vulnerability") or {}
+            adv = a.get("security_advisory") or _NOTHING
+            vuln = a.get("security_vulnerability") or _NOTHING
             lines.append(f"#{a.get('number')} [{(adv.get('severity') or '?').upper()}] "
                          f"{adv.get('summary') or 'security alert'}: {vuln.get('vulnerable_version_range') or ''} "
-                         f"-> patched in {(vuln.get('first_patched_version') or {}).get('identifier') or '?'}")
+                         f"-> patched in {(vuln.get('first_patched_version') or _NOTHING).get('identifier') or '?'}")
         fp = hashlib.sha1("|".join(f"{a.get('number')}:{a.get('state')}:"
-                                   f"{(a.get('security_advisory') or {}).get('ghsa_id')}" for a in group).encode()
+                                   f"{(a.get('security_advisory') or _NOTHING).get('ghsa_id')}" for a in group).encode()
                           ).hexdigest()[:12]
         items.append(Item(
             key=key, kind="security_alerts", repo=repo, number=None,
@@ -382,7 +389,7 @@ def security_alert_items(alerts: list[dict], repo: str, slug: str) -> list[Item]
     return items
 
 
-def code_scanning_items(alerts: list[dict], repo: str, slug: str) -> list[Item]:
+def code_scanning_items(alerts: list[dict[str, Any]], repo: str, slug: str) -> list[Item]:
     """One item per rule, not per alert. Five `js/double-escaping` findings
     are one piece of work (the same helper, fixed once), and a task that sees
     all the locations fixes the cause rather than the first symptom. The key
@@ -390,24 +397,24 @@ def code_scanning_items(alerts: list[dict], repo: str, slug: str) -> list[Item]:
     path segment. The fingerprint covers every open alert's number, commit
     and location, so a partial fix re-decides the item and a complete fix
     resolves it."""
-    by_rule: dict[str, list[dict]] = {}
+    by_rule: dict[str, list[dict[str, Any]]] = {}
     for a in alerts:
         if a.get("state") not in (None, "open"):
             continue
-        rule_id = str((a.get("rule") or {}).get("id") or "unknown-rule")
+        rule_id = str((a.get("rule") or _NOTHING).get("id") or "unknown-rule")
         by_rule.setdefault(rule_id, []).append(a)
     items: list[Item] = []
     for rule_id, group in by_rule.items():
         group.sort(key=lambda a: int(a.get("number") or 0))
         first = group[0]
-        rule = first.get("rule") or {}
-        tool = ((first.get("tool") or {}).get("name")) or "code scanning"
+        rule = first.get("rule") or _NOTHING
+        tool = ((first.get("tool") or _NOTHING).get("name")) or "code scanning"
         sev = min((_alert_severity(a) for a in group), key=lambda s: _SEVERITY_RANK.get(s, 9))
-        locs = []
+        locs: list[tuple[Any, str, str, str]] = []
         for a in group:
-            inst = a.get("most_recent_instance") or {}
-            loc = inst.get("location") or {}
-            msg = str((inst.get("message") or {}).get("text") or "").strip().replace("\n", " ")
+            inst = a.get("most_recent_instance") or _NOTHING
+            loc = inst.get("location") or _NOTHING
+            msg = str((inst.get("message") or _NOTHING).get("text") or "").strip().replace("\n", " ")
             path = loc.get("path") or "?"
             line = loc.get("start_line")
             locs.append((a.get("number"), f"{path}:{line}" if line else path, msg, (inst.get("commit_sha") or "")[:12]))
@@ -444,7 +451,7 @@ async def _ci_failures(client: GitHubClient, repo: str, slug: str, branch: str) 
                 key=f"ci:{sha}:{name}", kind="ci_failures", repo=repo,
                 title=f"{name} failed on {branch} @ {sha[:7]}", url=run.get("html_url") or "",
                 fingerprint=f"{sha}:{run.get('id')}",
-                summary=(run.get("output") or {}).get("title") or run.get("conclusion") or "",
+                summary=(run.get("output") or _NOTHING).get("title") or run.get("conclusion") or "",
             ))
         return out
     except PermissionError as e:
@@ -512,7 +519,7 @@ def settled(kind: str, finished_at: float, now: float, scanned_at: float | None)
     return now - finished_at >= SETTLE_S
 
 
-def still_open_text(item: Item | dict) -> str:
+def still_open_text(item: Item | dict[str, Any]) -> str:
     """What GitHub still reports, in the item's own terms: '1 alert',
     '4 alerts', 'the check failing', or 'it'."""
     d = item.to_dict() if isinstance(item, Item) else item
@@ -528,9 +535,9 @@ def _review_id(fingerprint: str | None) -> str:
     return str(fingerprint or "").rsplit(":", 1)[-1]
 
 
-def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: int,
+def decide(existing: dict[str, dict[str, Any]], found: list[Item], proj: dict[str, Any], open_auto: int,
            now: float | None = None, has_checks: bool | None = True,
-           live_tasks: set | None = None, finished_tasks: dict | None = None,
+           live_tasks: set[str] | None = None, finished_tasks: dict[str, float] | None = None,
            scanned_at: float | None = None) -> tuple[list[Decision], list[str]]:
     """Compare what was found with what the store holds.
 
@@ -559,7 +566,7 @@ def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: 
     now = now or time.time()
     finished = finished_tasks or {}
 
-    def _after_finished_task(item: Item, prev: dict) -> Decision | None:
+    def _after_finished_task(item: Item, prev: dict[str, Any]) -> Decision | None:
         """The decision for an item whose task is done, or None if it is not."""
         tid = prev.get("task_id")
         if not tid or tid not in finished or prev.get("state") not in ("task_created", "awaiting_rescan"):
@@ -604,7 +611,7 @@ def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: 
     # answer -- nothing is in flight.
     live = live_tasks
 
-    def _still_being_worked(prev: dict) -> bool:
+    def _still_being_worked(prev: dict[str, Any]) -> bool:
         """Is a task genuinely on this item right now?
 
         Asked so that `task_created` is not a one-way door: an item whose
@@ -699,6 +706,11 @@ def decide(existing: dict[str, dict], found: list[Item], proj: dict, open_auto: 
 # ---------------------------------------------------------------------------
 
 def _mac(config: Config, payload: bytes) -> str:
+    # No AUTH_SECRET_KEY means nothing to sign with: an empty one would sign
+    # every link with an empty HMAC key, which anyone can forge. ValueError is
+    # what the approve page turns into a "link problem".
+    if not config.auth_secret_key:
+        raise ValueError("invalid")
     key = base64.urlsafe_b64decode(config.auth_secret_key)
     return base64.urlsafe_b64encode(hmac.new(key, payload, hashlib.sha256).digest()).decode().rstrip("=")
 
@@ -709,7 +721,7 @@ def sign_approval(config: Config, repo: str, key: str, nonce: str, action: str =
     return f"{body}.{_mac(config, payload)}"
 
 
-def verify_approval(config: Config, token: str, now: float | None = None) -> dict:
+def verify_approval(config: Config, token: str, now: float | None = None) -> dict[str, Any]:
     """The payload, or ValueError whose message is a reason CODE (malformed,
     invalid, expired, unknown) the page maps to its own wording."""
     try:
@@ -727,7 +739,7 @@ def verify_approval(config: Config, token: str, now: float | None = None) -> dic
     return data
 
 
-def approval_url(settings: dict, token: str) -> str | None:
+def approval_url(settings: dict[str, Any], token: str) -> str | None:
     base = settings.get("public_url") or ""
     return f"{base}/api/github/approve?t={token}" if base else None
 
@@ -765,7 +777,7 @@ _MAX_SNIPPET_CHARS = 6000
 
 def parse_locations(summary: str) -> list[tuple[str, int, str]]:
     """(path, line, message) for every `#N path:line — message` in a summary."""
-    out = []
+    out: list[tuple[str, int, str]] = []
     for raw in (summary or "").splitlines():
         m = _LOC_RE.match(raw.strip())
         if m:
@@ -814,7 +826,7 @@ def code_for_locations(repo_root: str, summary: str) -> str:
         except OSError:
             continue
         for lo, hi in _merge_ranges(lines):
-            excerpt = []
+            excerpt: list[str] = []
             for n in range(lo, min(hi, len(content)) + 1):
                 flag = "  <-- flagged" if n in lines else ""
                 excerpt.append(f"{n:>5}  {content[n - 1]}{flag}")
@@ -877,7 +889,7 @@ _GOAL_TEMPLATES = {
 }
 
 
-def alert_numbers(item: dict) -> list[int]:
+def alert_numbers(item: dict[str, Any]) -> list[int]:
     """The Dependabot alert numbers an item stands for: its own, or every
     `#n` its summary lists for a grouped item."""
     if item.get("number"):
@@ -885,7 +897,7 @@ def alert_numbers(item: dict) -> list[int]:
     return [int(n) for n in re.findall(r"(?m)^#(\d+) ", item.get("summary") or "")]
 
 
-def alert_reference(item: dict) -> str:
+def alert_reference(item: dict[str, Any]) -> str:
     """'alert #9', or 'alerts #6, #8 and #9' for a grouped item."""
     nums = alert_numbers(item)
     if len(nums) <= 1:
@@ -918,13 +930,15 @@ _ATTEMPT_ADVICE = {
 }
 
 
-def attempts_text(d: dict) -> str:
+def attempts_text(d: dict[str, Any]) -> str:
     """What earlier tasks did and what GitHub still says, for the next task."""
-    kind = d.get("kind")
+    kind: str = d.get("kind") or ""
     lines = ["--- earlier attempts that GitHub did not accept ---"]
-    for a in d.get("attempts") or []:
+    attempts: list[dict[str, Any]] = d.get("attempts") or []
+    for a in attempts:
         when = datetime.fromtimestamp(a.get("finished_at") or 0).strftime("%Y-%m-%d %H:%M")
-        still = ", ".join(f"#{n}" for n in a.get("still_open") or []) or still_open_text({"kind": kind})
+        still_open: list[Any] = a.get("still_open") or []
+        still = ", ".join(f"#{n}" for n in still_open) or still_open_text({"kind": kind})
         task = str(a.get("task_id", ""))[:8]
         if kind == "review_requests":
             lines.append(f"- Task {task} finished on {when}, and a reviewer has since asked for changes again.")
@@ -936,7 +950,7 @@ def attempts_text(d: dict) -> str:
     return "\n".join(lines)
 
 
-def build_goal(item: Item | dict, pr_text: str | None = None, repo_root: str | None = None) -> str:
+def build_goal(item: Item | dict[str, Any], pr_text: str | None = None, repo_root: str | None = None) -> str:
     d = item.to_dict() if isinstance(item, Item) else dict(item)
     goal = _GOAL_TEMPLATES[d["kind"]].format(
         number=d.get("number"), title=d.get("title"), url=d.get("url"), summary=d.get("summary") or "",
@@ -979,7 +993,8 @@ _KIND_LABEL = {
 }
 
 
-def proposal_text(item: Item | dict, approve_link: str | None, dismiss_link: str | None, budget_usd: float) -> str:
+def proposal_text(item: Item | dict[str, Any], approve_link: str | None, dismiss_link: str | None,
+                  budget_usd: float) -> str:
     d = item.to_dict() if isinstance(item, Item) else dict(item)
     lines = [
         f"🐙 GitHub: {_KIND_LABEL.get(d['kind'], d['kind'])} on {d['repo']}",
@@ -1000,7 +1015,7 @@ def proposal_text(item: Item | dict, approve_link: str | None, dismiss_link: str
     return "\n".join(lines)
 
 
-def created_text(item: Item | dict, task_id: str, budget_usd: float) -> str:
+def created_text(item: Item | dict[str, Any], task_id: str, budget_usd: float) -> str:
     d = item.to_dict() if isinstance(item, Item) else dict(item)
     return (f"🐙 GitHub: task started automatically on {d['repo']}\n{d['title']}\n"
             f"{_KIND_LABEL.get(d['kind'], d['kind'])} · budget ${budget_usd:.2f} · task {task_id[:8]}\n{d.get('url') or ''}")
@@ -1013,8 +1028,8 @@ def created_text(item: Item | dict, task_id: str, budget_usd: float) -> str:
 CreateTask = Callable[[str, str, float, str], Awaitable[str]]        # (repo, goal, budget, route) -> task_id
 Notify = Callable[[str, str], Awaitable[None]]                        # (text, repo)
 OpenAutoCount = Callable[[str], Awaitable[int]]                       # repo -> open auto tasks
-LiveTasks = Callable[[str], Awaitable[set]]                           # repo -> task ids still in flight
-FinishedTasks = Callable[[str], Awaitable[dict]]                      # repo -> {done task id: finished at}
+LiveTasks = Callable[[str], Awaitable[set[str]]]                      # repo -> task ids still in flight
+FinishedTasks = Callable[[str], Awaitable[dict[str, float]]]          # repo -> {done task id: finished at}
 
 
 # One lock per item, held by everything that reads an item, acts on it and
@@ -1030,7 +1045,7 @@ def item_lock(repo: str, key: str) -> asyncio.Lock:
     return _ITEM_LOCKS.setdefault((repo, key), asyncio.Lock())
 
 
-async def _unchanged_since(store, repo: str, key: str, snapshot: dict | None) -> bool:
+async def _unchanged_since(store: BaseStore, repo: str, key: str, snapshot: dict[str, Any] | None) -> bool:
     """Whether the stored item is still the one a poll pass decided from."""
     current = await store.aget((NAMESPACE, repo), key)
     now = current.value if current is not None else None
@@ -1039,25 +1054,26 @@ async def _unchanged_since(store, repo: str, key: str, snapshot: dict | None) ->
     return now is not None and now.get("updated_at") == snapshot.get("updated_at")
 
 
-async def list_items(store, repo: str) -> dict[str, dict]:
+async def list_items(store: BaseStore, repo: str) -> dict[str, dict[str, Any]]:
     """Every item of the project. It read `asearch(limit=200)`, the 200 most
     recently updated: nothing prunes the namespace and CI keys are per
     commit, so a long-lived project passed 200 and its older items vanished
     from the list, answered 404 to approve, dismiss and snooze, and were
     never resolved or re-proposed by the poll (audit B35, 2026-10-22)."""
-    out: dict[str, dict] = {}
+    out: dict[str, dict[str, Any]] = {}
     for it in await store_paging.all_items(store, (NAMESPACE, repo)):
         out[it.key] = it.value
     return out
 
 
-async def get_item(store, repo: str, key: str) -> dict | None:
+async def get_item(store: BaseStore, repo: str, key: str) -> dict[str, Any] | None:
     """One item, read by its key. An approve link minted before the
     Dependabot key change names `alert:<n>`; it finds the item now holding
     that alert."""
     got = await store.aget((NAMESPACE, repo), key)
-    if got is not None and got.value is not None:
-        return dict(got.value)
+    value: dict[str, Any] | None = got.value if got is not None else None
+    if value is not None:
+        return dict(value)
     m = re.fullmatch(r"alert:(\d+)", key)
     if m:
         for v in (await list_items(store, repo)).values():
@@ -1073,7 +1089,8 @@ async def get_item(store, repo: str, key: str) -> dict | None:
 PRUNE_RESOLVED_AFTER_S = 30 * 86400
 
 
-async def _migrate_alert_keys(store, repo: str, existing: dict[str, dict], found: list[Item]) -> dict[str, dict]:
+async def _migrate_alert_keys(store: BaseStore, repo: str, existing: dict[str, dict[str, Any]],
+                             found: list[Item]) -> dict[str, dict[str, Any]]:
     """Move each `alert:<n>` row to the `alerts:<pkg@manifest>` key its
     alert is found under now, keeping its state, task and attempts (B36).
     The row keeps its updated_at, so the poll's own unchanged-since check
@@ -1099,7 +1116,7 @@ async def _migrate_alert_keys(store, repo: str, existing: dict[str, dict], found
     return existing
 
 
-async def _forget(store, repo: str, key: str, value: dict) -> None:
+async def _forget(store: BaseStore, repo: str, key: str, value: dict[str, Any]) -> None:
     delete = getattr(store, "adelete", None)
     if delete is not None:
         await delete((NAMESPACE, repo), key)
@@ -1107,13 +1124,14 @@ async def _forget(store, repo: str, key: str, value: dict) -> None:
         await store.aput((NAMESPACE, repo), key, {**value, "state": "resolved", "reason": "moved"})
 
 
-async def put_item(store, item: Item | dict) -> None:
+async def put_item(store: BaseStore, item: Item | dict[str, Any]) -> None:
     d = item.to_dict() if isinstance(item, Item) else dict(item)
     d["updated_at"] = time.time()
     await store.aput((NAMESPACE, d["repo"]), d["key"], d)
 
 
-async def create_task_for_item(item: dict, settings: dict, config: Config, create_task: CreateTask) -> str:
+async def create_task_for_item(item: dict[str, Any], settings: dict[str, Any], config: Config,
+                              create_task: CreateTask) -> str:
     proj = github_settings.project_settings(settings, item["repo"])
     pr_text = None
     if item.get("number") and item["kind"] in ("dependabot_prs", "review_requests"):
@@ -1125,17 +1143,17 @@ async def create_task_for_item(item: dict, settings: dict, config: Config, creat
     # of the branch the alert was raised against, and it is not being edited
     # by a task while this reads it.
     from agent.config import PROJECTS  # noqa: PLC0415
-    repo_root = (PROJECTS.get(item["repo"]) or {}).get("live")
+    repo_root = (PROJECTS.get(item["repo"]) or _NOTHING).get("live")
     goal = build_goal(item, pr_text, repo_root=repo_root)
     return await create_task(item["repo"], goal, float(proj["budget_usd"]), proj.get("route", "auto"))
 
 
 async def poll_project(
-    store, config: Config, settings: dict, repo: str, *,
+    store: BaseStore, config: Config, settings: dict[str, Any], repo: str, *,
     create_task: CreateTask, notify: Notify, open_auto_count: OpenAutoCount,
     client: GitHubClient | None = None, live_tasks: LiveTasks | None = None,
     finished_tasks: FinishedTasks | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """One project, one pass. Returns a small summary for the dashboard/log."""
     proj = github_settings.project_settings(settings, repo)
     token = github_settings.token_for(settings, config, repo)
@@ -1166,7 +1184,7 @@ async def poll_project(
             logger.warning("github inbox: %s last scan time unavailable: %s", repo, e)
     decisions, gone = decide(existing, found, proj, open_auto, has_checks=has_checks,
                              live_tasks=in_flight, finished_tasks=done, scanned_at=scanned_at)
-    summary = {"repo": repo, "found": len(found), "proposed": 0, "created": 0, "resolved": 0}
+    summary: dict[str, Any] = {"repo": repo, "found": len(found), "proposed": 0, "created": 0, "resolved": 0}
     for d in decisions:
         async with item_lock(repo, d.item.key):
             # An operator approved or dismissed it since `existing` was read:
@@ -1197,7 +1215,8 @@ async def poll_project(
     return summary
 
 
-async def _apply_decision(store, config: Config, settings: dict, repo: str, proj: dict, d, summary: dict, *,
+async def _apply_decision(store: BaseStore, config: Config, settings: dict[str, Any], repo: str,
+                          proj: dict[str, Any], d: Decision, summary: dict[str, Any], *,
                           create_task: CreateTask, notify: Notify) -> None:
     item = d.item
     item.reason = d.reason
@@ -1234,11 +1253,11 @@ async def _apply_decision(store, config: Config, settings: dict, repo: str, proj
         await put_item(store, item)
 
 
-async def poll_all(store, config: Config, *, create_task: CreateTask, notify: Notify,
+async def poll_all(store: BaseStore, config: Config, *, create_task: CreateTask, notify: Notify,
                    open_auto_count: OpenAutoCount, live_tasks: LiveTasks | None = None,
-                   finished_tasks: FinishedTasks | None = None) -> list[dict]:
+                   finished_tasks: FinishedTasks | None = None) -> list[dict[str, Any]]:
     settings = github_settings.current()
-    out = []
+    out: list[dict[str, Any]] = []
     for repo in github_settings.enabled_projects(settings):
         try:
             out.append(await poll_project(store, config, settings, repo, create_task=create_task,
@@ -1254,7 +1273,7 @@ async def poll_all(store, config: Config, *, create_task: CreateTask, notify: No
 # token probe -- for the settings card's Test button
 # ---------------------------------------------------------------------------
 
-async def _can(client: GitHubClient, path: str, params: dict) -> bool | None:
+async def _can(client: GitHubClient, path: str, params: dict[str, Any]) -> bool | None:
     """True/False for a permission the token clearly has or lacks; None when
     the endpoint answered something else (an empty repo has no HEAD, say)."""
     try:
@@ -1278,7 +1297,7 @@ async def _can_ci(client: GitHubClient, slug: str) -> bool | None:
     return False if (checks is False or actions is False) else None
 
 
-async def probe_token(token: str, projects: dict[str, dict]) -> dict:
+async def probe_token(token: str, projects: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Who the token is, which configured projects it can see, and what it
     may do there. Fine-grained tokens list only their selected repos."""
     client = GitHubClient(token)
@@ -1305,19 +1324,20 @@ async def probe_token(token: str, projects: dict[str, dict]) -> dict:
         if name not in reached:
             out["unreached"].append({"slug": None, "project": name,
                                      "error": "no GitHub origin on this project's checkout, so no token can reach it"})
+    repos: list[dict[str, Any]]
     try:
         repos = await client.get("/user/repos", {"per_page": 100, "sort": "updated"})
     except Exception as e:  # noqa: BLE001
         repos = []
         out["warning"] = f"could not list repositories: {e}"
     for r in repos:
-        slug = r.get("full_name")
-        perms = r.get("permissions") or {}
-        names = slugs.get(slug) or []
-        entry = {"slug": slug, "project": ", ".join(names) or None, "projects": names,
-                 "push": bool(perms.get("push")), "pull": bool(perms.get("pull"))}
+        slug: str | None = r.get("full_name")
+        perms = r.get("permissions") or _NOTHING
+        names = (slugs.get(slug) if slug else None) or []
+        entry: dict[str, Any] = {"slug": slug, "project": ", ".join(names) or None, "projects": names,
+                                 "push": bool(perms.get("push")), "pull": bool(perms.get("pull"))}
         out["repos"].append(entry)
-        if names:
+        if slug and names:
             entry["dependabot_alerts"] = await _can(client, f"/repos/{slug}/dependabot/alerts", {"per_page": 1})
             entry["code_scanning"] = await _can(client, f"/repos/{slug}/code-scanning/alerts", {"per_page": 1})
             entry["checks"] = await _can_ci(client, slug)
@@ -1331,7 +1351,7 @@ async def probe_token(token: str, projects: dict[str, dict]) -> dict:
         name = ", ".join(names)
         try:
             info = await client.repo(slug)
-            perms = info.get("permissions") or {}
+            perms = info.get("permissions") or _NOTHING
             out["matched"].append({
                 "slug": slug, "project": name, "projects": names, "push": bool(perms.get("push")), "pull": True,
                 "dependabot_alerts": await _can(client, f"/repos/{slug}/dependabot/alerts", {"per_page": 1}),

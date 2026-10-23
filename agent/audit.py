@@ -30,9 +30,12 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent.store_paging import all_items
+
+if TYPE_CHECKING:
+    from langgraph.store.base import BaseStore
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +111,8 @@ def _key(ts: float) -> str:
     return f"{int(ts * 1_000_000):018d}-{_sequence:06d}-{uuid.uuid4().hex[:6]}"
 
 
-async def record(store, *, actor: str, action: str, target: str | None = None,
-                 detail: str | None = None, extra: dict[str, Any] | None = None) -> dict | None:
+async def record(store: BaseStore | None, *, actor: str, action: str, target: str | None = None,
+                 detail: str | None = None, extra: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Append one record. Returns it, or None if it could not be written.
 
     `actor` is the account that made the decision -- an email, or a name like

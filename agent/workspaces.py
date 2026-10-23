@@ -46,6 +46,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger("tektonix")
 
@@ -108,7 +109,7 @@ def workspace_for(repo: str, task_id: str | None) -> str:
     return own_or_template(_projects()[repo]["sandbox"], task_id)
 
 
-def project_for_path(path: str) -> tuple[str, dict] | None:
+def project_for_path(path: str) -> tuple[str, dict[str, Any]] | None:
     """Which project a workspace directory belongs to -- its template or one
     of its task workspaces. None for anything else.
 
@@ -460,7 +461,7 @@ def _inside(root: str, rel: str) -> str | None:
     return full if full == real_root or full.startswith(real_root + os.sep) else None
 
 
-async def refresh_generated(root: str, rules: list[dict]) -> list[dict]:
+async def refresh_generated(root: str, rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Regenerate each rule's output in `root` whose schema changed since it
     was last generated here, and stamp it with the schema's hash. Runs in the
     sandbox, like everything else that executes the project's code. Never
@@ -576,7 +577,7 @@ def remove_sync(repo: str, task_id: str) -> dict:
     return {"ok": not os.path.exists(path), "removed": True}
 
 
-async def ensure(repo: str, task_id: str) -> dict:
+async def ensure(repo: str, task_id: str) -> dict[str, Any]:
     """The task's own workspace, created and filled on first use.
 
     Idempotent: a task that already has one gets it back untouched -- that is

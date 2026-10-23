@@ -63,6 +63,7 @@ import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from typing import Any
 
 from agent import episode_recall
 from agent.backends import backend_for_dsn
@@ -1318,7 +1319,7 @@ class PostgresHistoryIndex:
         terms = list(dict.fromkeys(keep + [t for lex in keep for t in _decompose(lex)]))
         return " | ".join(_lexeme_literal(lex) for lex in terms)
 
-    async def fetch(self, corpus: str, repo: str, item_key: str) -> dict | None:
+    async def fetch(self, corpus: str, repo: str, item_key: str) -> dict[str, Any] | None:
         """One whole indexed record, its chunks reassembled in order.
 
         Served from this table rather than from the store on purpose. The

@@ -11,10 +11,15 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Callable
+from typing import Any
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from agent import artifacts
+# files.py's sandbox resolver and logo_tools' LogoLoom call, both shared on
+# purpose rather than duplicated.
+# pyright: reportPrivateUsage=false
 from agent.tools.files import PathEscapeError, _resolve, read_bytes
 from agent.tools.tool_errors import tool_errors_to_text
 
@@ -36,13 +41,14 @@ async def _render_svg(svg: str, background: str, width: int, height: int) -> byt
     return base64.b64decode(r["pngBase64"])
 
 
-def make_show_images_tool(repo: str, root_for_reads, *, show_state: dict | None = None):
+def make_show_images_tool(repo: str, root_for_reads: Callable[[], str], *,
+                          show_state: dict[str, Any] | None = None) -> BaseTool:
     """`root_for_reads` returns the directory `path` images are read from --
     the task's workspace, or the project's for planning."""
 
     @tool
     @tool_errors_to_text
-    async def show_images(images: list[dict]) -> str:
+    async def show_images(images: list[dict[str, Any]]) -> str:
         """SHOW the operator images, in the chat -- the only tool that does.
 
         logo_render and describe_image only tell YOU what something looks
@@ -67,13 +73,16 @@ def make_show_images_tool(repo: str, root_for_reads, *, show_state: dict | None 
         already; repeat those lines in your reply next to what you say about
         each one, so the pictures stay with your words.
         """
-        if not isinstance(images, list) or not images:
+        # The tool schema already demands a list of objects; these checks are
+        # for a caller that skips it.
+        if not isinstance(images, list) or not images:  # pyright: ignore[reportUnnecessaryIsInstance]
             return "ERROR: pass a list of images, each with a caption and an svg or a path"
         if len(images) > MAX_IMAGES:
             return f"ERROR: at most {MAX_IMAGES} images at a time -- show the strongest options"
-        lines, problems = [], []
+        lines: list[str] = []
+        problems: list[str] = []
         for i, item in enumerate(images, 1):
-            if not isinstance(item, dict):
+            if not isinstance(item, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
                 problems.append(f"image {i}: not an object")
                 continue
             caption = str(item.get("caption") or f"Image {i}").replace("]", ")").replace("\n", " ")[:200]

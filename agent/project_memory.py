@@ -16,6 +16,7 @@ seats, the consolidator, the scripts and the tests import it from.
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from langgraph.store.base import BaseStore
@@ -83,13 +84,13 @@ SECTIONS_CORE_PATH = memory_sections.SECTIONS_CORE_PATH
 logger = logging.getLogger("tektonix")
 
 
-def project_namespace(repo: str):
+def project_namespace(repo: str) -> Callable[[object], tuple[str, ...]]:
     # One shared, cross-task memory file per project -- every task/thread for
     # this repo reads and writes the same store-backed AGENTS.md, not a
     # per-conversation copy. `rt` (Runtime) is unused here since the
     # namespace is fully determined by which project this factory call is
     # for, not by anything request-time.
-    def namespace(rt):
+    def namespace(rt: object) -> tuple[str, ...]:
         return (repo,)
 
     return namespace

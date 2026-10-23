@@ -169,3 +169,44 @@ async def test_the_inventory_walk_does_not_starve_the_loop(tmp_path, monkeypatch
     result = await run
     assert result["mapped"] is False and result["reasoning"].startswith("repo structure unchanged")
     assert max(gaps) < 0.15, f"the loop stalled for {max(gaps):.2f}s during a 300ms inventory walk"
+
+
+@pytest.mark.asyncio
+async def test_a_block_list_reply_is_read_as_text(tmp_path, monkeypatch):
+    """A provider can answer with a list of content blocks rather than a
+    string; `.strip()` on that list raised and no map was ever written."""
+    from types import SimpleNamespace
+
+    from langchain_core.messages import AIMessage
+    from langgraph.store.memory import InMemoryStore
+
+    from agent import cartographer as cart
+
+    inv = {"file_count": 1, "languages": {"py": 1}, "top_directories": [], "manifests": [],
+           "test_files": [], "docs": [], "tree": ["a.py"]}
+
+    async def quiet(*a, **k):
+        return {}
+
+    class _Model:
+        async def ainvoke(self, messages):
+            return AIMessage(content=[{"type": "text", "text": "  # Map\nall in a.py  "}])
+
+    seeded: list[str] = []
+
+    async def fake_seed(repo, store, name, description, content):
+        seeded.append(content)
+
+    monkeypatch.setattr(cart, "build_inventory", lambda repo, root: inv)
+    monkeypatch.setattr(cart, "_render_inventory", lambda inv: "inventory")
+    monkeypatch.setattr(cart, "refresh_recent_changes", quiet)
+    monkeypatch.setattr(cart, "refresh_freshness", quiet)
+    monkeypatch.setattr(cart, "init_chat_model", lambda *a, **k: _Model())
+    monkeypatch.setattr(cart, "seed_skill", fake_seed)
+    monkeypatch.setitem(cart.PROJECTS, "demo", {"live": str(tmp_path), "sandbox": str(tmp_path)})
+    config = SimpleNamespace(router_base_url="http://router.invalid", router_api_key="k")
+
+    result = await cart.run_cartographer(config, "demo", InMemoryStore())
+
+    assert result["mapped"] is True
+    assert seeded and seeded[0].endswith("# Map\nall in a.py")

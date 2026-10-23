@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from typing import Any
 
 _WS = re.compile(r"\s+")
 
@@ -100,7 +101,7 @@ def _key(todo: object) -> str | None:
     return _WS.sub(" ", content).strip().casefold()
 
 
-def merge_todos(previous: list | None, incoming: list | None) -> list | None:
+def merge_todos(previous: list[Any] | None, incoming: list[Any] | None) -> list[Any] | None:
     """The list to show and to store, given what the model just wrote.
 
     * an incoming item that was completed before stays completed;

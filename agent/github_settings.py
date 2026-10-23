@@ -28,11 +28,14 @@ import copy
 import logging
 import secrets
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from agent.config import Config
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from langgraph.store.base import BaseStore
 
 logger = logging.getLogger("tektonix")
 
@@ -102,6 +105,8 @@ _cache: dict[str, Any] | None = None
 # encryption -- same key and construction as the TOTP secrets in agent/auth.py
 # ---------------------------------------------------------------------------
 
+# The one key both modules encrypt with; auth.py owns it.
+# pyright: reportPrivateUsage=false
 def _key(config: Config) -> bytes:
     from agent.auth import _fernet_key
     return _fernet_key(config)
@@ -126,13 +131,13 @@ def token_hint(token: str) -> str:
 # shape
 # ---------------------------------------------------------------------------
 
-def _merge_project(raw: dict | None) -> dict[str, Any]:
+def _merge_project(raw: dict[str, Any] | None) -> dict[str, Any]:
     out = copy.deepcopy(DEFAULT_PROJECT)
     raw = raw or {}
     for k in ("token", "budget_usd", "max_open_auto", "authors", "route"):
         if k in raw:
             out[k] = raw[k]
-    pol = raw.get("policies") or {}
+    pol: dict[str, Any] = raw.get("policies") or {}
     for name in SOURCES:
         if pol.get(name) in MODES:
             out["policies"][name] = pol[name]
@@ -146,7 +151,7 @@ def _merge_project(raw: dict | None) -> dict[str, Any]:
     return out
 
 
-def normalize(raw: dict | None) -> dict[str, Any]:
+def normalize(raw: dict[str, Any] | None) -> dict[str, Any]:
     """Fill every gap with a default so callers never branch on absence."""
     raw = raw or {}
     out = copy.deepcopy(DEFAULTS)
@@ -154,14 +159,17 @@ def normalize(raw: dict | None) -> dict[str, Any]:
         out["poll_interval_min"] = int(raw["poll_interval_min"])
     if isinstance(raw.get("public_url"), str):
         out["public_url"] = raw["public_url"].strip().rstrip("/")
-    notify = raw.get("notify") or {}
+    notify: dict[str, Any] = raw.get("notify") or {}
     out["notify"] = {
         "telegram": bool(notify.get("telegram", True)),
         "email": bool(notify.get("email", False)),
         "email_to": str(notify.get("email_to") or "").strip(),
     }
-    out["tokens"] = {str(n): dict(t) for n, t in (raw.get("tokens") or {}).items() if isinstance(t, dict) and t.get("enc")}
-    out["projects"] = {str(r): _merge_project(p) for r, p in (raw.get("projects") or {}).items()}
+    tokens: dict[str, Any] = raw.get("tokens") or {}
+    out["tokens"] = {str(n): dict(cast(dict[str, Any], t)) for n, t in tokens.items()
+                     if isinstance(t, dict) and cast(dict[str, Any], t).get("enc")}
+    projects: dict[str, Any] = raw.get("projects") or {}
+    out["projects"] = {str(r): _merge_project(p) for r, p in projects.items()}
     return out
 
 
@@ -211,7 +219,7 @@ def current() -> dict[str, Any]:
     return _cache if _cache is not None else normalize(None)
 
 
-async def load(store) -> dict[str, Any]:
+async def load(store: BaseStore) -> dict[str, Any]:
     global _cache
     try:
         item = await store.aget(NAMESPACE, KEY)
@@ -246,15 +254,17 @@ def apply_patch(config: Config, settings: dict[str, Any], patch: dict[str, Any])
             raise ValueError("public_url must start with https:// or http://")
         out["public_url"] = url
     if "notify" in patch and isinstance(patch["notify"], dict):
-        n = patch["notify"]
+        n = cast(dict[str, Any], patch["notify"])
+        email_to = str(n.get("email_to", out["notify"]["email_to"]) or "").strip()
         out["notify"] = {
             "telegram": bool(n.get("telegram", out["notify"]["telegram"])),
             "email": bool(n.get("email", out["notify"]["email"])),
-            "email_to": str(n.get("email_to", out["notify"]["email_to"]) or "").strip(),
+            "email_to": email_to,
         }
-        if out["notify"]["email"] and out["notify"]["email_to"] and "@" not in out["notify"]["email_to"]:
+        if out["notify"]["email"] and email_to and "@" not in email_to:
             raise ValueError("notify.email_to is not an email address")
-    for name in patch.get("remove_tokens") or []:
+    remove_tokens: list[Any] = patch.get("remove_tokens") or []
+    for name in remove_tokens:
         out["tokens"].pop(str(name), None)
         for proj in out["projects"].values():
             if proj.get("token") == name:
@@ -263,8 +273,9 @@ def apply_patch(config: Config, settings: dict[str, Any], patch: dict[str, Any])
     # GitHub as their understanding of what each one is for improves. Without
     # this the only way to correct one here was remove and re-add, which means
     # pasting the secret again and losing every project mapped to it.
-    for old, new in (patch.get("rename_tokens") or {}).items():
-        old, new = str(old).strip(), str(new).strip()
+    rename_tokens: dict[str, Any] = patch.get("rename_tokens") or {}
+    for old_raw, new_raw in rename_tokens.items():
+        old, new = str(old_raw).strip(), str(new_raw).strip()
         if old not in out["tokens"]:
             raise ValueError(f"no token named {old!r}")
         if not new or len(new) > 40:
@@ -280,24 +291,28 @@ def apply_patch(config: Config, settings: dict[str, Any], patch: dict[str, Any])
             if proj.get("token") == old:
                 proj["token"] = new
 
-    for name, raw in (patch.get("add_tokens") or {}).items():
-        name = str(name).strip()
-        raw = str(raw or "").strip()
+    add_tokens: dict[str, Any] = patch.get("add_tokens") or {}
+    for name_raw, raw_token in add_tokens.items():
+        name = str(name_raw).strip()
+        raw = str(raw_token or "").strip()
         if not name or len(name) > 40:
             raise ValueError("token name must be 1-40 characters")
         if not raw or len(raw) < 20 or any(ch.isspace() for ch in raw):
             raise ValueError(f"token {name!r} does not look like a GitHub token")
         out["tokens"][name] = {"enc": encrypt_token(config, raw), "hint": token_hint(raw), "created_at": time.time()}
-    for repo, p in (patch.get("projects") or {}).items():
+    patch_projects: dict[str, Any] = patch.get("projects") or {}
+    for repo, p in patch_projects.items():
         if not isinstance(p, dict):
             continue
+        p = cast(dict[str, Any], p)
         cur = _merge_project(out["projects"].get(repo))
         if "token" in p:
             tok = p["token"] or None
             if tok is not None and tok not in out["tokens"]:
                 raise ValueError(f"project {repo!r} names an unknown token {tok!r}")
             cur["token"] = tok
-        for source, mode in (p.get("policies") or {}).items():
+        policies: dict[str, Any] = p.get("policies") or {}
+        for source, mode in policies.items():
             if source not in SOURCES:
                 raise ValueError(f"unknown source {source!r}")
             if mode not in MODES:
@@ -319,7 +334,7 @@ def apply_patch(config: Config, settings: dict[str, Any], patch: dict[str, Any])
     return out
 
 
-async def save(store, config: Config, patch: dict[str, Any]) -> dict[str, Any]:
+async def save(store: BaseStore, config: Config, patch: dict[str, Any]) -> dict[str, Any]:
     global _cache
     new = apply_patch(config, current(), patch)
     await store.aput(NAMESPACE, KEY, new)

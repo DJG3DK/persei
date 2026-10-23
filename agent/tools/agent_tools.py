@@ -29,9 +29,15 @@ import mimetypes
 import os
 import uuid
 
-from langchain_core.tools import tool
+from typing import Any
+
+from langchain_core.tools import BaseTool, tool
 
 from deepagents.backends.protocol import BackendProtocol
+# Two private helpers reused on purpose: deepagents' own offload preview (so an
+# offloaded result reads the same as one deepagents offloaded) and files.py's
+# sandbox resolver.
+# pyright: reportPrivateUsage=false
 from deepagents.middleware._message_eviction import _create_content_preview
 
 from agent.tools.files import (BinaryFileError, PathEscapeError, _resolve, own_space_redirect, read_bytes,
@@ -50,7 +56,7 @@ from agent.tools.vision import describe_image_bytes
 OFFLOAD_THRESHOLD_CHARS = 15_000
 
 
-def _describe_output(r: dict) -> str:
+def _describe_output(r: dict[str, Any]) -> str:
     """What the model sees as the body of a bash result.
 
     A command that succeeds and prints nothing used to return the empty
@@ -189,7 +195,7 @@ def make_agent_tools(
     backend: BackendProtocol | None = None,
     initial_last_failed_edit: str | None = None,
     benchmark: bool = False,
-) -> tuple[list, dict]:
+) -> tuple[list[BaseTool], dict[str, str | None]]:
     """Returns ([bash, read, write, edit, describe_image], last_failed_edit_state)
     -- the agent's tools for reaching the real repo, scoped to `repo_root`,
     plus a mutable dict tracking the edit-repeat guard's current state (see
@@ -355,9 +361,10 @@ def make_agent_tools(
                 # result (2026-09-25: the legitimate half of `grep ... ;
                 # find / ...` was being thrown away with the hunt).
                 from agent.tools.benchmark_guard import screen  # noqa: PLC0415
-                command, refused = screen(command)
-                if command is None:
-                    return refused
+                screened = screen(command)
+                if screened[0] is None:
+                    return screened[1]
+                command, refused = screened
                 if refused:
                     notes.append(refused)
             # What the model asked to run, for the advice below; `command`
@@ -494,8 +501,8 @@ def make_agent_tools(
     # cleanly through AgentState's checkpointed, serialized storage across
     # passes -- see this function's own docstring on why a single pass's
     # closure isn't enough.
-    _last_failed_edit: dict = {"signature": initial_last_failed_edit}
-    _last_noop_edit: dict = {"path": None}
+    _last_failed_edit: dict[str, str | None] = {"signature": initial_last_failed_edit}
+    _last_noop_edit: dict[str, str | None] = {"path": None}
 
     @tool
     @tool_errors_to_text

@@ -20,11 +20,13 @@ import logging
 import re
 import subprocess
 from collections.abc import Callable
+from typing import Any
 
 import httpx
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
+from langgraph.store.base import BaseStore
 
-from agent.config import PROJECTS
+from agent.config import PROJECTS, Config
 from agent.tools.tool_errors import tool_errors_to_text
 
 logger = logging.getLogger("tektonix")
@@ -124,11 +126,13 @@ def project_for(name: str, allowed_repos: list[str] | None = None) -> tuple[str 
                   f"{listing}), or the GitHub owner/repo of one of them.")
 
 
-def _headers(token: str, accept: str = "application/vnd.github+json") -> dict:
+def _headers(token: str, accept: str = "application/vnd.github+json") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Accept": accept, "X-GitHub-Api-Version": "2022-11-28"}
 
 
-def _get(token: str, path: str, accept: str = "application/vnd.github+json", params: dict | None = None):
+def _get(token: str, path: str, accept: str = "application/vnd.github+json",
+         params: dict[str, Any] | None = None) -> Any:
+    """The decoded JSON, or the text for a diff accept type."""
     r = httpx.get(f"{API}{path}", headers=_headers(token, accept), params=params, timeout=_TIMEOUT)
     if r.status_code == 404:
         raise LookupError("not found (or the token has no access to this repository)")
@@ -138,15 +142,20 @@ def _get(token: str, path: str, accept: str = "application/vnd.github+json", par
     return r.text if accept.endswith("diff") else r.json()
 
 
-def fetch_pull_request(token: str, slug: str, number: int) -> dict:
+def _sub(obj: dict[str, Any], key: str) -> dict[str, Any]:
+    """A nested object of an API payload, or {} when GitHub sent null."""
+    return obj.get(key) or {}
+
+
+def fetch_pull_request(token: str, slug: str, number: int) -> dict[str, Any]:
     """Everything the model needs about one PR, as plain data."""
     pr = _get(token, f"/repos/{slug}/pulls/{number}")
     diff = _get(token, f"/repos/{slug}/pulls/{number}", accept="application/vnd.github.diff")
     review_comments = _get(token, f"/repos/{slug}/pulls/{number}/comments", params={"per_page": 100})
     issue_comments = _get(token, f"/repos/{slug}/issues/{number}/comments", params={"per_page": 100})
     reviews = _get(token, f"/repos/{slug}/pulls/{number}/reviews", params={"per_page": 50})
-    checks = []
-    head_sha = (pr.get("head") or {}).get("sha")
+    checks: list[dict[str, Any]] = []
+    head_sha = _sub(pr, "head").get("sha")
     if head_sha:
         try:
             runs = _get(token, f"/repos/{slug}/commits/{head_sha}/check-runs", params={"per_page": 50})
@@ -156,13 +165,13 @@ def fetch_pull_request(token: str, slug: str, number: int) -> dict:
     return {"pr": pr, "diff": diff, "review_comments": review_comments, "issue_comments": issue_comments, "reviews": reviews, "checks": checks}
 
 
-def format_pull_request(data: dict, part: str = "all") -> str:
-    pr = data["pr"]
-    head = pr.get("head") or {}
-    base = pr.get("base") or {}
+def format_pull_request(data: dict[str, Any], part: str = "all") -> str:
+    pr: dict[str, Any] = data["pr"]
+    head = _sub(pr, "head")
+    base = _sub(pr, "base")
     lines = [
         f"PR #{pr.get('number')}: {pr.get('title')}",
-        f"state: {pr.get('state')}{' (draft)' if pr.get('draft') else ''} | author: {(pr.get('user') or {}).get('login')} | "
+        f"state: {pr.get('state')}{' (draft)' if pr.get('draft') else ''} | author: {_sub(pr, 'user').get('login')} | "
         f"branch: {head.get('ref')} -> {base.get('ref')} | head: {str(head.get('sha'))[:10]} | "
         f"+{pr.get('additions')} -{pr.get('deletions')} in {pr.get('changed_files')} files",
         f"url: {pr.get('html_url')}",
@@ -171,25 +180,26 @@ def format_pull_request(data: dict, part: str = "all") -> str:
         body = (pr.get("body") or "").strip()
         lines += ["", "DESCRIPTION:", body or "(none)"]
     if part in ("all", "checks", "summary"):
-        checks = data.get("checks") or []
+        checks: list[dict[str, Any]] = data.get("checks") or []
         if checks:
             lines += ["", "CHECKS:"]
             lines += [f"- {c.get('name')}: {c.get('status')} / {c.get('conclusion') or '-'}" for c in checks]
     if part in ("all", "comments", "summary"):
-        rc = data.get("review_comments") or []
-        ic = data.get("issue_comments") or []
-        rv = [r for r in (data.get("reviews") or []) if (r.get("body") or "").strip()]
+        rc: list[dict[str, Any]] = data.get("review_comments") or []
+        ic: list[dict[str, Any]] = data.get("issue_comments") or []
+        reviews: list[dict[str, Any]] = data.get("reviews") or []
+        rv = [r for r in reviews if (r.get("body") or "").strip()]
         if rv:
             lines += ["", f"REVIEWS ({len(rv)}):"]
-            lines += [f"- [{r.get('state')}] {(r.get('user') or {}).get('login')}: {(r.get('body') or '').strip()[:800]}" for r in rv[:10]]
+            lines += [f"- [{r.get('state')}] {_sub(r, 'user').get('login')}: {(r.get('body') or '').strip()[:800]}" for r in rv[:10]]
         if rc:
             lines += ["", f"REVIEW COMMENTS ON THE DIFF ({len(rc)}, showing {min(len(rc), _COMMENT_CAP)}):"]
             for c in rc[:_COMMENT_CAP]:
                 where = f"{c.get('path')}:{c.get('line') or c.get('original_line') or '?'}"
-                lines.append(f"- {where} ({(c.get('user') or {}).get('login')}): {(c.get('body') or '').strip()[:600]}")
+                lines.append(f"- {where} ({_sub(c, 'user').get('login')}): {(c.get('body') or '').strip()[:600]}")
         if ic:
             lines += ["", f"CONVERSATION COMMENTS ({len(ic)}):"]
-            lines += [f"- {(c.get('user') or {}).get('login')}: {(c.get('body') or '').strip()[:600]}" for c in ic[:_COMMENT_CAP]]
+            lines += [f"- {_sub(c, 'user').get('login')}: {(c.get('body') or '').strip()[:600]}" for c in ic[:_COMMENT_CAP]]
         if not (rv or rc or ic):
             lines += ["", "COMMENTS: none"]
     if part in ("all", "diff"):
@@ -200,19 +210,19 @@ def format_pull_request(data: dict, part: str = "all") -> str:
     return "\n".join(lines)
 
 
-def format_pull_request_list(slug: str, prs: list, state: str) -> str:
+def format_pull_request_list(slug: str, prs: list[dict[str, Any]], state: str) -> str:
     if not prs:
         return f"No {state} pull requests on {slug}."
     lines = [f"{len(prs)} {state} pull request(s) on {slug}" + (f" (showing {_LIST_CAP})" if len(prs) > _LIST_CAP else "") + ":"]
     for p in prs[:_LIST_CAP]:
-        lines.append(f"- #{p.get('number')} [{p.get('state')}{', draft' if p.get('draft') else ''}] {p.get('title')} -- {(p.get('user') or {}).get('login')}, {(p.get('head') or {}).get('ref')} -> {(p.get('base') or {}).get('ref')}")
+        lines.append(f"- #{p.get('number')} [{p.get('state')}{', draft' if p.get('draft') else ''}] {p.get('title')} -- {_sub(p, 'user').get('login')}, {_sub(p, 'head').get('ref')} -> {_sub(p, 'base').get('ref')}")
     return "\n".join(lines)
 
 
 TokenSource = str | Callable[[str], str | None] | None
 
 
-def make_github_tools(token: TokenSource, allowed_repos: list[str] | None = None) -> list:
+def make_github_tools(token: TokenSource, allowed_repos: list[str] | None = None) -> list[BaseTool]:
     """The two read-only PR tools, or an empty list when no token is set (the
     prompts only mention them when they exist).
 
@@ -222,11 +232,12 @@ def make_github_tools(token: TokenSource, allowed_repos: list[str] | None = None
     dashboard works on the next call without a restart."""
     if not token:
         return []
-    resolve_token = token if callable(token) else (lambda _repo: token)
+    def resolve_token(repo: str) -> str | None:
+        return token(repo) if callable(token) else token
 
     def _project(repo: str) -> str:
         project, problem = project_for(repo, allowed_repos)
-        if problem:
+        if project is None:
             raise ValueError(problem)
         return project
 
@@ -286,7 +297,7 @@ def make_github_tools(token: TokenSource, allowed_repos: list[str] | None = None
     return [github_pull_request, github_pull_requests]
 
 
-def available(config) -> bool:
+def available(config: Config) -> bool:
     """Whether the GitHub tools exist on this installation.
 
     The enablement rule lives here, with the tools, and is read from here by
@@ -303,7 +314,7 @@ def available(config) -> bool:
     return token_source(config) is not None
 
 
-def token_source(config) -> TokenSource:
+def token_source(config: Config) -> TokenSource:
     """Per-project resolver: the project's stored token from Settings ->
     GitHub, else GITHUB_TOKEN. Falsy when neither exists, so the tools are
     absent rather than present-and-broken."""
@@ -314,14 +325,14 @@ def token_source(config) -> TokenSource:
     return lambda repo: github_settings.token_for(github_settings.current(), config, repo)
 
 
-_INBOX_KIND = {
+_INBOX_KIND: dict[str | None, str] = {
     "dependabot_prs": "Dependabot PR", "security_alerts": "security alert",
     "review_requests": "review requesting changes", "ci_failures": "failing check",
     "code_scanning": "Code scanning alert",
 }
 
 
-def format_inbox(repo: str, items: list[dict], state: str) -> str:
+def format_inbox(repo: str, items: list[dict[str, Any]], state: str) -> str:
     if not items:
         return f"The GitHub inbox has no {state} items for {repo}."
     lines = [f"{len(items)} {state} GitHub inbox item(s) for {repo}:"]
@@ -339,7 +350,7 @@ def format_inbox(repo: str, items: list[dict], state: str) -> str:
     return "\n".join(lines)
 
 
-def make_github_inbox_tool(store, allowed_repos: list[str] | None = None):
+def make_github_inbox_tool(store: BaseStore, allowed_repos: list[str] | None = None) -> BaseTool:
     """Read the GitHub inbox (agent/github_inbox.py) for a project: what the
     poller found -- Dependabot PRs, security alerts with the patched version,
     reviews, failing checks -- and what state each is in. Host-side read of
@@ -362,16 +373,16 @@ def make_github_inbox_tool(store, allowed_repos: list[str] | None = None):
         exact list, so the plan can name every item instead of guessing
         from the lockfile."""
         project, problem = project_for(repo, allowed_repos)
-        if problem:
+        if project is None:
             return f"ERROR: {problem}"
         repo = project
-        items = list((await github_inbox.list_items(store, repo)).values())
+        items: list[dict[str, Any]] = list((await github_inbox.list_items(store, repo)).values())
         open_states = ("proposed", "seen", "snoozed", "task_created")
         if state == "open":
             items = [i for i in items if i.get("state") in open_states]
         elif state != "all":
             items = [i for i in items if i.get("state") == state]
-        order = {"code_scanning": 0, "security_alerts": 1, "ci_failures": 2, "review_requests": 3, "dependabot_prs": 4}
+        order: dict[str | None, int] = {"code_scanning": 0, "security_alerts": 1, "ci_failures": 2, "review_requests": 3, "dependabot_prs": 4}
         items.sort(key=lambda i: (order.get(i.get("kind"), 9), -(i.get("updated_at") or 0)))
         return format_inbox(repo, items, state)
 

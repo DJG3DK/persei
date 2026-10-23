@@ -29,6 +29,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 from agent import config as _config
 from agent.config import PROJECTS, reload_projects
@@ -133,7 +134,7 @@ async def _autodetect(repo: str) -> dict | None:
     )
 
 
-async def autodetect_checks_if_none(repo: str) -> dict | None:
+async def autodetect_checks_if_none(repo: str) -> dict[str, Any] | None:
     """After a merge: if the reviewer runs no checks for `repo`, detect and
     write the recommended ones. Returns an execution_log entry describing
     what happened, or None when there was nothing to do or it could not be

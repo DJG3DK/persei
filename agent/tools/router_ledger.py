@@ -25,6 +25,7 @@ simply never resolves anything and the estimate stands, exactly as before.
 import json
 import logging
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 logger = logging.getLogger("tektonix")
@@ -52,7 +53,7 @@ class RouterLedger:
         self._signature: tuple[int, int] | None = None
         self._costs: dict[str, float] = {}
 
-    def actual_costs(self, call_ids) -> dict[str, float]:
+    def actual_costs(self, call_ids: Iterable[str | None]) -> dict[str, float]:
         """{call_id: billed_cost} for every requested id the router has
         logged so far. Ids the router has not billed yet are simply absent."""
         wanted = [c for c in call_ids if c]

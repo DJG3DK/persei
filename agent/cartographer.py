@@ -47,6 +47,7 @@ from agent.deep_agent import (
     route_local_path,
     seed_skill,
 )
+from agent.message_text import content_text
 from deepagents.backends.store import StoreBackend
 
 logger = logging.getLogger("tektonix")
@@ -437,7 +438,9 @@ async def run_cartographer(
         {"role": "system", "content": CARTOGRAPHER_SYSTEM_PROMPT.format(repo=repo)},
         {"role": "user", "content": _render_inventory(inv)},
     ])
-    content = (reply.content or "").strip()
+    # content_text, not `reply.content`: a provider can answer with a list of
+    # content blocks, and .strip() on that raised instead of reading the text.
+    content = content_text(reply.content).strip()
     if not content:
         return {"repo": repo, "mapped": False, "hash": digest, "reasoning": "model returned nothing"}
 

@@ -2,8 +2,10 @@ import json
 import logging
 import os
 import re
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -12,7 +14,7 @@ from agent.backends import backend_for_dsn
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
-def apply_git_identity(env: dict | None = None) -> None:
+def apply_git_identity(env: MutableMapping[str, str] | None = None) -> None:
     """GIT_USER_NAME / GIT_USER_EMAIL (the operator's, from .env or the app's
     settings) become the author and committer of every commit the agent
     makes, unless git's own variables are already set. The bundle sets the
@@ -195,7 +197,7 @@ def valid_branch_name(name: object) -> bool:
     return isinstance(name, str) and 0 < len(name) <= 255 and bool(_BRANCH_RE.match(name))
 
 
-def _load_projects_config() -> dict:
+def _load_projects_config() -> dict[str, Any]:
     path = _PROJECTS_CONFIG_PATH if _PROJECTS_CONFIG_PATH.exists() else _PROJECTS_EXAMPLE_PATH
     with open(path) as f:
         data = json.load(f)
@@ -208,13 +210,13 @@ def _load_projects_config() -> dict:
 
 
 _projects_config = _load_projects_config()
-PROJECTS = _projects_config["projects"]
+PROJECTS: dict[str, dict[str, Any]] = _projects_config["projects"]
 
 # Per-project test-only environment overrides — for a project whose test
 # suite needs a path to something outside its own sandbox checkout (for
 # example, a live config file it deliberately targets against a single real
 # instance). Scoped per project; not a standing grant to every task.
-PROJECT_TEST_ENV = _projects_config.get("test_env", {})
+PROJECT_TEST_ENV: dict[str, dict[str, Any]] = _projects_config.get("test_env", {})
 
 
 def reload_projects() -> dict:

@@ -26,6 +26,11 @@ it is correct on both.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from langgraph.store.base import BaseStore, SearchItem
+
 # One page of a store read. Deliberately large so a normal namespace is one
 # call, with paging as the safety net rather than the common path.
 _PAGE = 500
@@ -60,14 +65,15 @@ def _identity(item) -> tuple:
     return (tuple(getattr(item, "namespace", ()) or ()), item.key)
 
 
-async def all_items(store, ns, *, no_offset_limit: int = _NO_OFFSET_LIMIT) -> list:
+async def all_items(store: BaseStore, ns: tuple[str, ...], *,
+                    no_offset_limit: int = _NO_OFFSET_LIMIT) -> list[SearchItem]:
     """Every record under the namespace prefix `ns`, however many pages that takes.
 
     `no_offset_limit` is the size of the one read made to a store that has
     no `offset` at all -- see the constant for why a caller that counts the
     result has to choose it.
     """
-    seen: dict[tuple, object] = {}
+    seen: dict[tuple[Any, ...], SearchItem] = {}
     offset = 0
     for _ in range(_MAX_PAGES):
         try:

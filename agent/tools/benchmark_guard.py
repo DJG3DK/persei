@@ -92,7 +92,11 @@ def hunt_reason(command: str) -> str | None:
 def refusal(command: str) -> str | None:
     """The whole-command refusal, for a command that hunts and nothing else."""
     why = hunt_reason(command)
-    return f"{BENCHMARK_REFUSED_PREFIX} on a benchmark task ({why}). {_WHY}" if why else None
+    return _refusal_for(why) if why else None
+
+
+def _refusal_for(why: str) -> str:
+    return f"{BENCHMARK_REFUSED_PREFIX} on a benchmark task ({why}). {_WHY}"
 
 
 def _partial(refused: list[tuple[str, str]]) -> str:
@@ -101,7 +105,7 @@ def _partial(refused: list[tuple[str, str]]) -> str:
             f"The rest of the command ran; its result follows.")
 
 
-def screen(command: str) -> tuple[str | None, str | None]:
+def screen(command: str) -> tuple[str, str | None] | tuple[None, str]:
     """What of `command` may run, and what to tell the model about the rest.
 
     Returns (remaining_command, note). Nothing hunts: (command, None). Every
@@ -109,10 +113,11 @@ def screen(command: str) -> tuple[str | None, str | None]:
     back with their own separators, a note naming the refused ones and why).
     """
     text = command or ""
-    if not hunt_reason(text):
+    whole_why = hunt_reason(text)
+    if not whole_why:
         return text, None
     if _UNSPLITTABLE.search(text):
-        return None, refusal(text)
+        return None, _refusal_for(whole_why)
     kept: list[str] = []
     refused: list[tuple[str, str]] = []
     prev_sep = ""
@@ -131,5 +136,5 @@ def screen(command: str) -> tuple[str | None, str | None]:
     # `cd /workspace && git fsck` minus the hunt is a bare `cd`: nothing
     # left worth a container, so that is a whole refusal too.
     if not any(not _BARE_CD.match(seg) for seg in kept[::2]):
-        return None, refusal(text)
+        return None, _refusal_for(whole_why)
     return "".join(kept).strip(), _partial(refused)
