@@ -55,6 +55,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-tektonix}
       TEKTONIX_PG_SECRET_DIR: /run/tektonix-pg
       TEKTONIX_ROUTER_KEY_DIR: /run/tektonix-router
+      TEKTONIX_LAUNCHER_KEY_DIR: /run/tektonix-launcher
       TEKTONIX_LEGACY_SECRETS_DIR: /run/tektonix-secrets
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -65,6 +66,7 @@ services:
       # its values over (init-secrets.sh copies them on first start).
       - pgsecret:/run/tektonix-pg
       - routerkey:/run/tektonix-router
+      - launcherkey:/run/tektonix-launcher
       - bundlesecrets:/run/tektonix-secrets
       - ./docker/postgres/init-secrets.sh:/tektonix/init-secrets.sh:ro
     healthcheck:
@@ -123,9 +125,9 @@ services:
   # window: on a slow first download the agent was declared unhealthy before
   # it had started serving, and the whole stack failed (2026-09-28). The
   # container itself does nothing and exits at once; the image is the point.
-  # (The agent's entrypoint still builds it when it is missing, which is
-  # the desktop app's case: it pulls the release image and tags it, and
-  # runs `up --no-build`.)
+  # (The sandbox launcher, below, still builds it at start when it is
+  # missing, which is the desktop app's case: it pulls the release image and
+  # tags it, and runs `up --no-build`.)
   sandbox-image:
     image: tektonix-sandbox:latest
     pull_policy: build
@@ -133,6 +135,68 @@ services:
       context: ./docker/agent-sandbox
     entrypoint: ["true"]
     restart: "no"
+
+  # The only service with the Docker socket. Anything that can reach the
+  # socket can start a privileged container with / mounted, so the agent --
+  # which runs model-written commands' tool layer and every dependency it
+  # imports -- does not get it. It asks this service instead, over a private
+  # network with a key generated on first boot (init-secrets.sh), and this
+  # service starts allow-listed images only, with its own cpu, memory and
+  # pids limits, every capability dropped but the three the PUID hand-back
+  # needs, no privileged mode and no bind mount outside PROJECTS_DIR; and
+  # exec, kill and logs answer only for containers carrying its label.
+  # services/sandbox-launcher/launcher.py has the whole list.
+  sandbox-launcher:
+    image: tektonix-launcher:latest
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: docker/sandbox-launcher/Dockerfile
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      SANDBOX_LAUNCHER_KEY_FILE: /run/tektonix-launcher/launcher_key
+      # Every bind mount must resolve inside this root, as this container
+      # sees it (the same folder the agent sees at /projects); the daemon
+      # is handed the host's own path for it. A wrong PROJECTS_DIR mounts
+      # empty directories -- silently -- which is why it is the same
+      # variable the agent mounts. See docker/README.md.
+      SANDBOX_LAUNCHER_ROOT: /projects
+      SANDBOX_HOST_ROOT: ${PROJECTS_DIR:?set PROJECTS_DIR in .env}
+      # What a check or a shell command may use. The desktop app sets these
+      # from the machine's size. The agent's own copies only size the test
+      # runners' worker pools; these are the limits.
+      SANDBOX_CPUS: ${SANDBOX_CPUS:-2}
+      SANDBOX_MEMORY: ${SANDBOX_MEMORY:-2g}
+      # Images beyond the sandbox image and docker/stack-images.json that a
+      # project's `sandbox_image` may name: comma-separated, from .env.
+      SANDBOX_EXTRA_IMAGES: ${SANDBOX_EXTRA_IMAGES:-}
+      # The database checks: the one network a check may join besides none
+      # and the default bridge, and the two containers the launcher's psql
+      # and FLUSHDB operations run in. The same values the agent has.
+      REVIEW_CHECKS_NETWORK: tektonix_checks
+      REVIEW_CHECKS_POSTGRES_CONTAINER: tektonix-checks-postgres
+      REVIEW_CHECKS_REDIS_CONTAINER: tektonix-checks-redis
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only: only to resolve a mount source's symlinks against the
+      # same tree the daemon will mount. Nothing here writes to it.
+      - ${PROJECTS_DIR:?set PROJECTS_DIR in .env}:/projects:ro
+      - launcherkey:/run/tektonix-launcher:ro
+    # The image's HEALTHCHECK, named here so the agent can wait on it.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8300/health', timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - launcher
+    logging: *logging
+    restart: unless-stopped
 
   agent:
     image: tektonix-agent:latest
@@ -143,6 +207,8 @@ services:
     depends_on:
       sandbox-image:
         condition: service_completed_successfully
+      sandbox-launcher:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       router:
@@ -195,13 +261,15 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      # THE line that makes sibling containers work. The agent sees projects at
-      # /projects; the host daemon, which actually resolves every bind mount,
-      # sees them at PROJECTS_DIR. Without this the sandbox would mount empty
-      # directories and every task would read an empty repo -- silently.
-      # See agent/tools/sandbox.py's host_path().
-      AGENT_HOST_PATH_MAP: /projects=${PROJECTS_DIR:?set PROJECTS_DIR in .env}
-      # What a check or a shell command may use (agent/tools/sandbox.py).
+      # Every sandbox container is started by the sandbox launcher, which
+      # holds the Docker socket this container does not (agent/tools/
+      # sandbox_launcher.py). The agent hands it paths as it sees them under
+      # /projects; the launcher maps them to PROJECTS_DIR for the daemon,
+      # so there is no AGENT_HOST_PATH_MAP here any more.
+      SANDBOX_LAUNCHER_URL: http://sandbox-launcher:8300
+      SANDBOX_LAUNCHER_KEY_FILE: /run/tektonix-launcher/launcher_key
+      # What a check or a shell command may use; the launcher enforces its
+      # own copy, and the agent sizes test runners' worker pools from this.
       # The desktop app sets these from the machine's size.
       SANDBOX_CPUS: ${SANDBOX_CPUS:-2}
       SANDBOX_MEMORY: ${SANDBOX_MEMORY:-2g}
@@ -229,11 +297,11 @@ services:
       # container on the private `checks` network, against the two throwaway
       # services below (agent/review_sandbox.py). The network is internal and
       # this service is NOT on it: a check can reach the two of them and
-      # nothing else, and the agent sets each run up with `docker exec` into
-      # the two containers (their names, and the URLs as a check sees them;
-      # no password -- each run gets its own plain role). All five unset
-      # means the reviewer refuses the database checks, as it did before
-      # 2026-09-27.
+      # nothing else, and the agent sets each run up through the sandbox
+      # launcher's psql and FLUSHDB operations in the two containers (their
+      # names, and the URLs as a check sees them; no password -- each run
+      # gets its own plain role). All five unset means the reviewer refuses
+      # the database checks, as it did before 2026-09-27.
       REVIEW_CHECKS_NETWORK: tektonix_checks
       REVIEW_CHECKS_POSTGRES_URL: postgresql://checks@checks-postgres:5432/postgres
       REVIEW_CHECKS_REDIS_URL: redis://checks-redis:6379
@@ -257,8 +325,7 @@ services:
       # machine alone; the agent checks the bind it was given (desktop_install).
       BIND_ADDRESS: ${BIND_ADDRESS:-127.0.0.1}
     volumes:
-      # Sibling containers, not nested. See docker/agent/Dockerfile.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # No Docker socket: the sandbox launcher above starts the sandboxes.
       - ${PROJECTS_DIR:?set PROJECTS_DIR in .env}:/projects
       - agentdata:/app/data
       - reviewshared:/app/shared
@@ -267,10 +334,12 @@ services:
       - routerlogs:/app/router-logs:ro
       - pgsecret:/run/tektonix-pg:ro
       - routerkey:/run/tektonix-router:ro
-      # The sandbox image's build context, for the entrypoint's fallback
-      # build when the image is missing (compose builds it above; the
-      # desktop app pulls it).
-      - ./docker/agent-sandbox:/app/docker/agent-sandbox:ro
+      - launcherkey:/run/tektonix-launcher:ro
+    # default for everything else; launcher to reach the sandbox launcher,
+    # which is on that network alone.
+    networks:
+      - default
+      - launcher
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${AGENT_PORT:-8100}:8100"
     logging: *logging
@@ -367,10 +436,10 @@ services:
       GIT_COMMITTER_NAME: ${GIT_USER_NAME:-Persei}
       GIT_COMMITTER_EMAIL: ${GIT_USER_EMAIL:-${ADMIN_EMAIL:-admin@example.com}}
       # Checks run agent-authored code, and THIS container holds the secret
-      # that authorises a merge -- so they never run here. The agent, which
-      # has the docker socket, starts a sandbox container for each one
+      # that authorises a merge -- so they never run here. The agent has the
+      # sandbox launcher start a sandbox container for each one
       # (services/commit-reviewer/sandbox.js), after a probe that the image is
-      # there; the agent builds it on demand. Unset, every check refuses.
+      # there; the launcher builds it on demand. Unset, every check refuses.
       AGENT_SANDBOX_URL: http://agent:8100
       # Under /projects so the agent can hand it to the host daemon, and the
       # same value the agent validates against.
@@ -386,8 +455,8 @@ services:
   # The database checks' own Postgres and Redis: throwaway, on the internal
   # `checks` network only, where the only other thing is the check container
   # of a review in flight. The agent is not on the network; it creates and
-  # drops each review's role and database with `docker exec` into these
-  # containers (fixed names, so it can). Data lives in memory; nothing here
+  # drops each review's role and database through the sandbox launcher's
+  # `docker exec` into these containers (fixed names, so it can). Data lives in memory; nothing here
   # outlives a restart, and nothing here is yours. The bootstrap password is
   # replaced with one nobody holds the moment the server is up
   # (docker/checks-postgres/init.sh): a check gets its own plain role, not
@@ -454,11 +523,18 @@ networks:
   checks:
     name: tektonix_checks
     internal: true
+  # The agent and the sandbox launcher, and nothing else: the review
+  # services, which are on `default` with the agent, cannot even open a
+  # connection to the one service that holds the Docker socket. Internal,
+  # because the launcher talks to the daemon over the socket, never the
+  # network.
+  launcher:
+    internal: true
 
-# Ten named volumes. `docker compose down` keeps them; `down -v` destroys
+# Eleven named volumes. `docker compose down` keeps them; `down -v` destroys
 # them. Worth backing up: pgdata, routerconfig, agentdata, and the two
 # secret volumes (docs/backup.md, scripts/backup.sh --bundle). The rest is
-# regenerated or is only logs. docker/README.md lists the same ten.
+# regenerated or is only logs. docker/README.md lists the same eleven.
 volumes:
   # The router's live config: the model pins the Models page writes.
   routerconfig:
@@ -473,6 +549,9 @@ volumes:
   # The generated router key, written there too; read by the router, the
   # agent and the commit reviewer.
   routerkey:
+  # The sandbox launcher's key, written there too; read by the launcher and
+  # the agent. Regenerated if lost: both read it fresh at their next start.
+  launcherkey:
   # Where both of those lived before 2026-09-29. Mounted by postgres only,
   # so an upgrade keeps its password; empty on a fresh install.
   bundlesecrets:

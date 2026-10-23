@@ -1,15 +1,11 @@
 # The agent, as one image.
 #
-# Two things here are not the obvious choice, and both are load-bearing:
-#
-#  * the docker CLI is installed but no daemon runs. The container talks to the
-#    HOST's daemon over the mounted socket, so the sandbox containers it starts
-#    are its SIBLINGS, not its children. Docker-in-docker would need privileged
-#    mode and would nest a second storage driver for no benefit.
-#  * because those siblings are created by the host daemon, every bind mount
-#    the agent asks for is resolved against the HOST filesystem. That is what
-#    AGENT_HOST_PATH_MAP is for (agent/tools/sandbox.py) and why compose sets
-#    it from the same variable it mounts the projects with.
+# No docker here, CLI or socket. The sandbox containers every command runs in
+# are started by the bundle's sandbox launcher (docker/sandbox-launcher), the
+# one service holding the host daemon's socket: a socket in this container
+# made a compromise of the agent process root on the host. The agent asks the
+# launcher over HTTP (agent/tools/sandbox_launcher.py), and the launcher
+# decides the image, the limits and what may be mounted.
 
 FROM node:24-slim AS frontend
 WORKDIR /build
@@ -23,17 +19,9 @@ FROM python:3.12-slim AS runtime
 
 # git: the agent's own worktree/commit operations run in this container.
 # ripgrep: the planner's repo search.
-# docker-cli: talks to the host daemon, see above. No daemon, no compose plugin.
 # curl + ca-certificates: healthcheck and TLS to the model provider.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ripgrep curl ca-certificates gnupg \
-    && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg \
-        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
-        > /etc/apt/sources.list.d/docker.list \
-    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+        git ripgrep curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

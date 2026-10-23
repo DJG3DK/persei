@@ -94,24 +94,45 @@ in front of it if you do. In the desktop app, changing it also ends the
 relaxed sign-in the app gets on its own machine: two-factor is required for
 the admin again, and sessions last seven days (SECURITY.md, "Signing in").
 
-## Why the Docker socket is mounted
+## Who holds the Docker socket
 
-The agent runs every command the model issues inside a throwaway container. In
-the bundle it asks the *host's* Docker daemon to start those, so they are
-siblings of the agent container rather than nested inside it — no privileged
-mode, no second storage driver.
+The agent runs every command the model issues inside a throwaway container,
+started by the *host's* Docker daemon, so they are siblings of the stack's
+containers rather than nested inside one — no privileged mode, no second
+storage driver.
 
-The consequence is the one thing to understand here: **bind mounts are resolved
-by the host daemon, not by the agent container.** The agent sees a project at
-`/projects/foo`; the daemon must be told `C:\Users\you\code\foo`. That is what
-`AGENT_HOST_PATH_MAP` does (compose sets it from `PROJECTS_DIR`), and it is why
-a wrong `PROJECTS_DIR` produces an agent that reads an *empty* repo rather than
-an error.
+The agent does not hold the socket. Anything that can reach
+`/var/run/docker.sock` can start a privileged container with `/` mounted, so
+a socket in the agent container made any compromise of the agent process
+root on the host. One small service, `sandbox-launcher`
+(`services/sandbox-launcher/launcher.py`), holds it instead, and the agent
+asks it for each container over a private network (`launcher`, which only
+the two of them join) with a key generated on first boot into the
+`launcherkey` volume. The launcher starts only:
+
+* an allow-listed image: `tektonix-sandbox:latest`, the toolchain images in
+  `docker/stack-images.json`, and any listed in `SANDBOX_EXTRA_IMAGES` in
+  `.env` (a project's own `sandbox_image` must be one of these);
+* under its own limits (`SANDBOX_CPUS`, `SANDBOX_MEMORY`, 512 processes, no
+  swap), every capability dropped but the three the `PUID` hand-back needs,
+  `no-new-privileges`, never privileged;
+* with bind mounts only from inside `PROJECTS_DIR`, symlinks followed first;
+* on no network, the default bridge, or the database checks' network;
+
+and it execs into, stops or reads the logs of the containers it labelled
+itself, and no others.
+
+The one thing to understand here: **bind mounts are resolved by the host
+daemon, not by any container.** The agent and the launcher see a project at
+`/projects/foo`; the daemon must be told `C:\Users\you\code\foo`. The
+launcher does that translation from `SANDBOX_HOST_ROOT`, which compose sets
+from `PROJECTS_DIR`, and it is why a wrong `PROJECTS_DIR` produces an agent
+that reads an *empty* repo rather than an error.
 
 ## First run
 
 Compose builds the sandbox image (the `sandbox-image` service) before the
-agent starts. The agent's entrypoint then generates `AUTH_SECRET_KEY` into
+agent starts; the sandbox launcher builds it at start when it is missing. The agent's entrypoint then generates `AUTH_SECRET_KEY` into
 the data volume and `REVIEW_CONTROL_SECRET` into the volume it shares with
 the review services, writes an empty `projects.json` beside it, and waits
 for Postgres. All of it is idempotent: `down` and `up` again changes
@@ -154,14 +175,15 @@ connection". `depends_on: service_healthy` is what closes that.
 * **Checks run in a sandbox the agent starts, not in the reviewer.** The
   reviewer is deliberately NOT given `/var/run/docker.sock` (the socket would
   make it host-root equivalent), and it holds the merge secret, so it runs no
-  agent-written code itself. It asks the agent, which has the socket, to
-  start the same hardened container for each check, after a probe that the
-  image is there (the agent builds it on demand). A project's `db:drift`,
+  agent-written code itself. It asks the agent, which has the sandbox
+  launcher start the same hardened container for each check, after a probe
+  that the image is there (the launcher builds it on demand). A project's `db:drift`,
   `db:seed` and `test:e2e` run the same way against the bundle's own
   throwaway `checks-postgres` and `checks-redis`, on an internal network the
   check container shares with those two services and nothing else -- not
-  the agent, which sets a run up with `docker exec` into them and hands
-  the checks a plain role of their own. See `SECURITY.md`.
+  the agent, which sets a run up through the launcher's two fixed
+  operations in them (`psql`, `FLUSHDB`) and hands the checks a plain role
+  of their own. See `SECURITY.md`.
 * **The daily jobs.** Memory consolidation and the codebase map are scheduled
   by the agent itself, once a day at the first quiet moment, with a Run now
   button on the memory panel. There is no cron in the bundle and none is
@@ -175,7 +197,7 @@ connection". `depends_on: service_healthy` is what closes that.
 
 ## Data
 
-Ten named volumes. `docker compose down` keeps them; `down -v` destroys them.
+Eleven named volumes. `docker compose down` keeps them; `down -v` destroys them.
 
 | Volume | Holds | Back it up? |
 |---|---|---|
@@ -184,6 +206,7 @@ Ten named volumes. `docker compose down` keeps them; `down -v` destroys them.
 | `agentdata` | `AUTH_SECRET_KEY`, the encrypted first password, the daily jobs' markers | **yes** — the database is unreadable without the key |
 | `pgsecret` | the generated database password | **yes** — lost with it, the agent cannot open a surviving `pgdata` |
 | `routerkey` | the generated router key | yes, or regenerate: delete it and restart |
+| `launcherkey` | the generated sandbox launcher key, read by the launcher and the agent | no — regenerated on the next start |
 | `reviewshared` | `projects.json` and the review-control secret, for the review services | `projects.json` is worth a copy |
 | `reviewstate` | verdicts and their history | optional |
 | `bundlesecrets` | where the two secrets lived before 2026-09-29; postgres reads it once on upgrade | no |

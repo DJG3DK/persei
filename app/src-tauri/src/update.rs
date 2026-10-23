@@ -367,7 +367,11 @@ mod tests {
 
     #[test]
     fn a_release_with_a_manifest_is_pulled_by_digest_and_never_by_another_tag() {
-        let d = verified_digests(PUBKEY, MESSAGE.as_bytes(), SIG).unwrap();
+        let mut d = verified_digests(PUBKEY, MESSAGE.as_bytes(), SIG).unwrap();
+        // The signed fixture predates the launcher image; a real manifest
+        // names all five (release.yml refuses to sign one that does not).
+        let launcher = format!("sha256:{}", "e".repeat(64));
+        d.images.insert("launcher".to_string(), launcher);
         let cmds = pull_commands("v0.9.0-rc23", Some(&d)).unwrap();
         assert_eq!(
             cmds[0],

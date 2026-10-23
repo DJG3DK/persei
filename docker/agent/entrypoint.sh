@@ -107,28 +107,17 @@ except Exception as e:
     done
 fi
 
-# 4. The sandbox image. compose builds it before this container starts (the
-#    sandbox-image service); this is the fallback for a stack started with
-#    --no-build, which is how the desktop app runs the pulled release images.
-#    A bundle that starts without it fails on the first tool call of the
-#    first task instead of at boot.
-if ! docker image inspect tektonix-sandbox:latest >/dev/null 2>&1; then
-    if [ -d /app/docker/agent-sandbox ]; then
-        echo "[entrypoint] building the sandbox image (it was missing)..."
-        docker build -q -t tektonix-sandbox:latest /app/docker/agent-sandbox >/dev/null \
-            && echo "[entrypoint] sandbox image ready" \
-            || echo "[entrypoint] sandbox build failed -- tasks will fail on their first command" >&2
-    else
-        echo "[entrypoint] no sandbox context mounted; expecting tektonix-sandbox:latest on the host" >&2
-    fi
-fi
+# 4. The sandbox image is not this container's business any more: the
+#    sandbox launcher builds it when it is missing (compose builds it first;
+#    the desktop app pulls it). This container has no Docker socket at all.
 
 # 5. Whose files. The agent writes into PROJECTS_DIR, the operator's own
 #    folder on the host: worktrees, commits, merges. As root, every one of
 #    them is root-owned on Linux. With PUID/PGID set in .env (`id -u`,
 #    `id -g`) the server runs as that user, after the volumes it writes are
-#    made its own (a release that ran as root left them root-owned) and with
-#    the docker socket's group, which is how it starts sandbox containers.
+#    made its own (a release that ran as root left them root-owned), and
+#    with no supplementary groups: it used to take the docker socket's, and
+#    has no socket now (the sandbox launcher starts its containers).
 #    Unset, it stays root: Docker Desktop's bind mounts do not care, and
 #    that is every install before 2026-09-29.
 puid=${PUID:-0}
@@ -139,12 +128,9 @@ if [ "$puid" != 0 ] && [ "$(id -u)" = 0 ]; then
     for d in "$state" "$shared" /app/logs /app/router-config /app/keys; do
         [ -d "$d" ] && chown -R "$puid:$pgid" "$d"
     done
-    sock=${DOCKER_SOCKET:-/var/run/docker.sock}
-    groups=--clear-groups
-    [ -S "$sock" ] && groups="--groups $(stat -c %g "$sock")"
     export HOME="$state"
     echo "[entrypoint] dashboard on http://localhost:${API_PORT:-8100}"
-    exec setpriv --reuid="$puid" --regid="$pgid" $groups \
+    exec setpriv --reuid="$puid" --regid="$pgid" --clear-groups \
         uvicorn agent.server:app --host 0.0.0.0 --port "${API_PORT:-8100}"
 fi
 

@@ -441,7 +441,7 @@ jobs:
 
   bundle:
     name: Bundle — the stack actually starts
-    # Builds five images and runs them. On a push to main that touches what
+    # Builds six images and runs them. On a push to main that touches what
     # the bundle is built from (bundle-paths above), or from the Actions tab.
     #
     # This is the half `docker compose config` cannot see. Both bundle

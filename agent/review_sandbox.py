@@ -9,10 +9,12 @@ holds the review-control secret and can reach the merge endpoint. A test that
 read /app/data/review_control_secret and POSTed `{"force": true}` merged its
 own branch past the gate.
 
-So the reviewer asks the agent, which already holds the socket and already
-runs the same commands for its own `run_checks` tool, to start the container
-for it. The agent does not take the reviewer's word for anything that decides
-what the container can see:
+So the reviewer asks the agent, which already runs the same commands for its
+own `run_checks` tool, to start the container for it -- through the sandbox
+launcher, the one bundle service that holds the socket (agent/tools/
+sandbox_launcher.py), which applies its own limits and allow-lists on top.
+The agent does not take the reviewer's word for anything that decides what
+the container can see:
 
   * the worktree must sit directly under REVIEW_WORKTREE_ROOT, be named for
     the project, and be a git worktree of THAT project's live checkout;
@@ -40,6 +42,7 @@ from dataclasses import dataclass, field
 from agent import paths
 
 from agent.tools import sandbox as sb
+from agent.tools import sandbox_launcher as launcher
 
 WORKTREE_ROOT_ENV = "REVIEW_WORKTREE_ROOT"
 
@@ -79,7 +82,8 @@ class CheckRequest:
 # and the three commands run in the same hardened container as every other
 # check, joined to that network alone. The agent is NOT on that network: it
 # sets the run up over `docker exec` into the two service containers (psql
-# and redis-cli on their own sockets), so nothing a check can reach has a
+# and redis-cli on their own sockets; in the bundle, the sandbox launcher's
+# two fixed operations that do exactly that), so nothing a check can reach has a
 # route to the agent, the router, the reviewer or the internet. Each run
 # gets its own plain role owning its own database (CONNECT revoked from
 # everyone else), and its own Redis database from a pool, so runs neither
@@ -346,6 +350,8 @@ async def _docker(*args: str, timeout_s: float = 30, stdin: bytes | None = None)
 
 
 async def image_present(image: str) -> bool:
+    if launcher.enabled():
+        return await launcher.image_present(image)
     ok, _ = await _docker("image", "inspect", image, "--format", "{{.Id}}")
     return ok
 
@@ -356,6 +362,12 @@ def _building(image: str) -> bool:
 
 
 async def _build(image: str) -> None:
+    if launcher.enabled():
+        # The launcher builds from the context baked into its own image, in
+        # the background; this only asks.
+        if await launcher.build_default_image():
+            logger.info("review sandbox: the sandbox launcher is building %s", image)
+        return
     ok, out = await _docker("build", "-q", "-t", image, str(SANDBOX_CONTEXT), timeout_s=_BUILD_TIMEOUT_S)
     if ok:
         logger.info("review sandbox: built %s", image)
@@ -368,7 +380,7 @@ def start_build(image: str) -> bool:
     and none is running. True when a build is now in progress."""
     if _building(image):
         return True
-    if image != sb.SANDBOX_IMAGE or not (SANDBOX_CONTEXT / "Dockerfile").is_file():
+    if image != sb.SANDBOX_IMAGE or not (launcher.enabled() or (SANDBOX_CONTEXT / "Dockerfile").is_file()):
         return False
     _builds[image] = asyncio.get_running_loop().create_task(_build(image))
     return True
@@ -378,7 +390,10 @@ async def probe(image: str | None = None) -> dict:
     """Whether a check could run here right now: docker reachable and the
     image present. {ok, mode, image, docker, reason} in sandbox.js's terms."""
     image = image or sb.SANDBOX_IMAGE
-    ok, version = await _docker("version", "--format", "{{.Server.Version}}")
+    if launcher.enabled():
+        ok, version = await launcher.docker_version()
+    else:
+        ok, version = await _docker("version", "--format", "{{.Server.Version}}")
     if not ok:
         return {"ok": False, "mode": "unavailable", "image": image, "docker": None,
                 "reason": f"docker is not usable from the agent: {version[:200]}"}
@@ -410,6 +425,8 @@ async def run_check(req: CheckRequest) -> dict:
         building = start_build(image)
         return _refusal(image, f"the sandbox image {image} is not built"
                         + (" (the agent is building it now)" if building else ""))
+    if launcher.enabled():
+        return await _run_check_via_launcher(req, argv, name, image, timeout_s)
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -442,6 +459,28 @@ async def run_check(req: CheckRequest) -> dict:
         raise
     text = (out or b"").decode("utf-8", errors="replace")[-MAX_OUTPUT_CHARS:]
     return {"ok": proc.returncode == 0, "code": proc.returncode, "output": text, "image": image}
+
+
+async def _run_check_via_launcher(req: CheckRequest, argv: list[str], name: str, image: str,
+                                  timeout_s: float) -> dict:
+    """run_check's tail in the bundle: the same argv, started by the sandbox
+    launcher, with the same timeout and cancellation handling."""
+    try:
+        code, text, timed_out = await launcher.run(argv, timeout_s)
+    except launcher.LauncherError as e:
+        return {"ok": False, "code": 1, "infrastructure": True, "image": image, "output": f"SETUP: {e}"}
+    except asyncio.CancelledError:
+        await sb._kill_container(name)
+        await _reclaim(req, image)
+        raise
+    if timed_out:
+        await _reclaim(req, image)
+        logger.warning("review-sandbox: %s %s timed out after %ds", req.project, req.cmd, int(timeout_s))
+        return {"ok": False, "code": 124, "image": image, "infrastructure": True,
+                "output": f"SETUP: the check timed out after {int(timeout_s)}s and was stopped; nothing is known "
+                          f"about the code either way. Raise this check's timeoutMs in the project's review "
+                          f"settings if the suite genuinely needs longer."}
+    return {"ok": code == 0, "code": code, "output": text[-MAX_OUTPUT_CHARS:], "image": image}
 
 
 # --- running a project's database checks in the sandbox ----------------------------
@@ -497,9 +536,12 @@ async def _admin_sql(sql: str) -> None:
     its own unix socket, which is trusted locally. The agent opens no
     connection and holds no password, and needs no route to the server."""
     pg = _parse_dsn(os.environ[CHECKS_POSTGRES_ENV])
-    ok, out = await _docker("exec", "-i", os.environ[CHECKS_POSTGRES_CONTAINER_ENV],
-                            "psql", "-v", "ON_ERROR_STOP=1", "-q", "-U", pg["user"], "-d", pg["db"],
-                            stdin=sql.encode(), timeout_s=60)
+    if launcher.enabled():
+        ok, out = await launcher.checks_psql(sql, pg["user"], pg["db"])
+    else:
+        ok, out = await _docker("exec", "-i", os.environ[CHECKS_POSTGRES_CONTAINER_ENV],
+                                "psql", "-v", "ON_ERROR_STOP=1", "-q", "-U", pg["user"], "-d", pg["db"],
+                                stdin=sql.encode(), timeout_s=60)
     if not ok:
         raise RuntimeError(out[-300:] or "psql failed")
 
@@ -507,9 +549,12 @@ async def _admin_sql(sql: str) -> None:
 async def _admin_rows(sql: str) -> list[str]:
     """One query the same way, its rows back one per line (psql -At)."""
     pg = _parse_dsn(os.environ[CHECKS_POSTGRES_ENV])
-    ok, out = await _docker("exec", "-i", os.environ[CHECKS_POSTGRES_CONTAINER_ENV],
-                            "psql", "-v", "ON_ERROR_STOP=1", "-At", "-U", pg["user"], "-d", pg["db"],
-                            stdin=sql.encode(), timeout_s=60)
+    if launcher.enabled():
+        ok, out = await launcher.checks_psql(sql, pg["user"], pg["db"], rows=True)
+    else:
+        ok, out = await _docker("exec", "-i", os.environ[CHECKS_POSTGRES_CONTAINER_ENV],
+                                "psql", "-v", "ON_ERROR_STOP=1", "-At", "-U", pg["user"], "-d", pg["db"],
+                                stdin=sql.encode(), timeout_s=60)
     if not ok:
         raise RuntimeError(out[-300:] or "psql failed")
     return [line.strip() for line in out.splitlines() if line.strip()]
@@ -558,8 +603,11 @@ async def sweep_orphans() -> list[str]:
 
 async def _flush_redis(db: int) -> None:
     """FLUSHDB on the run's database, by redis-cli inside the redis container."""
-    ok, out = await _docker("exec", os.environ[CHECKS_REDIS_CONTAINER_ENV], "redis-cli", "-n", str(db), "FLUSHDB",
-                            timeout_s=30)
+    if launcher.enabled():
+        ok, out = await launcher.checks_redis_flush(db)
+    else:
+        ok, out = await _docker("exec", os.environ[CHECKS_REDIS_CONTAINER_ENV], "redis-cli", "-n", str(db),
+                                "FLUSHDB", timeout_s=30)
     if not ok or out.strip() != "OK":
         raise RuntimeError(f"redis answered {out[-200:]!r}")
 

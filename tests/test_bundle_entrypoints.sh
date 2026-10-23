@@ -3,12 +3,14 @@
 # the privileged tools stubbed. What they decide before that exec is what
 # a fresh install, an upgrade and a rotation depend on:
 #
-#   * init-secrets.sh writes one secret per volume, carries an upgrade's
-#     values over from the old shared volume, and refuses to hand the agent
-#     a password the database was not initialised with;
+#   * init-secrets.sh writes one secret per volume (the sandbox launcher's
+#     key included), carries an upgrade's values over from the old shared
+#     volume, and refuses to hand the agent a password the database was not
+#     initialised with;
 #   * the agent's entrypoint moves the two files the review services read
 #     into the shared volume, survives an empty environment under `set -u`,
-#     and drops to PUID/PGID with the docker socket's group;
+#     never calls docker (it has no socket), and drops to PUID/PGID with no
+#     supplementary groups;
 #   * the reviewer's entrypoint drops to PUID/PGID, or stays put unset.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -47,7 +49,7 @@ reset() { rm -rf "$T/v"; mkdir -p "$T/v"; : > "$T/calls"; }
 echo "init-secrets.sh"
 INIT="$ROOT/docker/postgres/init-secrets.sh"
 run_init() {   # env... -- runs the wrapper in a clean environment
-    env -i PATH="$PATH" TEKTONIX_PG_SECRET_DIR="$T/v/pg" TEKTONIX_ROUTER_KEY_DIR="$T/v/rk" \
+    env -i PATH="$PATH" TEKTONIX_PG_SECRET_DIR="$T/v/pg" TEKTONIX_ROUTER_KEY_DIR="$T/v/rk" TEKTONIX_LAUNCHER_KEY_DIR="$T/v/lk" \
         TEKTONIX_LEGACY_SECRETS_DIR="$T/v/legacy" PGDATA="$T/v/pgdata" "$@" sh "$INIT" postgres >/dev/null 2>"$T/err"
 }
 
@@ -56,11 +58,17 @@ run_init
 check "a fresh install gets a generated password and key, one per volume" \
     '[[ -s "$T/v/pg/postgres_password" && -s "$T/v/rk/model_router_key" && "$(cat "$T/v/rk/model_router_key")" == sk-* ]]'
 check "the password is not written next to the key" '[[ ! -e "$T/v/rk/postgres_password" && ! -e "$T/v/pg/model_router_key" ]]'
+check "the sandbox launcher's key is generated in its own volume" \
+    '[[ "$(cat "$T/v/lk/launcher_key")" =~ ^[0-9a-f]{64}$ && ! -e "$T/v/lk/model_router_key" && ! -e "$T/v/rk/launcher_key" ]]'
 check "the files are readable by the other containers' users" '[[ "$(stat -c %a "$T/v/pg/postgres_password")" == 444 ]]'
 check "then postgres starts with the password file, not the value" 'grep -q "^docker-entrypoint.sh postgres" "$T/calls"'
 first="$(cat "$T/v/pg/postgres_password")"
 run_init
-check "a restart keeps them" '[[ "$(cat "$T/v/pg/postgres_password")" == "$first" ]]'
+lkey="$(cat "$T/v/lk/launcher_key")"
+check "a restart keeps them" '[[ "$(cat "$T/v/pg/postgres_password")" == "$first" && "$(cat "$T/v/lk/launcher_key")" == "$lkey" ]]'
+rm -f "$T/v/lk/launcher_key"
+run_init
+check "a lost launcher key is generated again" '[[ -s "$T/v/lk/launcher_key" && "$(cat "$T/v/lk/launcher_key")" != "$lkey" ]]'
 
 reset
 mkdir -p "$T/v/legacy"; printf 'old-pw' > "$T/v/legacy/postgres_password"; printf 'sk-old' > "$T/v/legacy/model_router_key"
@@ -110,6 +118,7 @@ AGENT="$T/agent-entrypoint.sh"
 rm -rf "$T/app"; mkdir -p "$T/app"; : > "$T/calls"
 run_agent
 check "an empty environment (set -u) gets through to the server" 'grep -q "^uvicorn agent.server:app" "$T/calls"'
+check "and never calls docker: the sandbox launcher builds the sandbox image" '! grep -q "^docker " "$T/calls"'
 check "the secrets are generated in the data directory when there is no shared one" \
     '[[ -s "$T/app/data/auth_secret_key" && -s "$T/app/data/review_control_secret" ]]'
 check "and projects.json is created where AGENT_PROJECTS_JSON says" \
@@ -127,17 +136,15 @@ check "AUTH_SECRET_KEY stays in the data volume" '[[ "$(cat "$T/app/data/auth_se
 check "it still runs as root when PUID is unset" '! grep -q "^setpriv" "$T/calls"'
 
 rm -rf "$T/app"; mkdir -p "$T/app/data"; : > "$T/calls"
+# A socket where the old compose file mounted one: an upgrade that kept it
+# must not hand its group to the server.
 "$PY" -c "import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])" "$T/docker.sock"
-sockgid="$(stat -c %g "$T/docker.sock")"
 run_agent PUID=4321 PGID=4322 DOCKER_SOCKET="$T/docker.sock" TEKTONIX_SHARED_DIR="$T/app/shared"
-check "with PUID/PGID the server runs as that user with the docker socket's group" \
-    'grep -q "^setpriv --reuid=4321 --regid=4322 --groups $sockgid uvicorn agent.server:app" "$T/calls"'
+check "with PUID/PGID the server runs as that user with no supplementary groups, socket or not" \
+    'grep -q "^setpriv --reuid=4321 --regid=4322 --clear-groups uvicorn agent.server:app" "$T/calls"'
 check "the user is created when the uid is unknown" 'grep -q "^useradd -u 4321 -g 4322" "$T/calls" && grep -q "^groupadd -g 4322" "$T/calls"'
 check "the volumes it writes are made its own first" \
     'grep -q "^chown -R 4321:4322 $T/app/data" "$T/calls" && grep -q "^chown -R 4321:4322 $T/app/shared" "$T/calls"'
-rm -rf "$T/app"; mkdir -p "$T/app/data"; : > "$T/calls"
-run_agent PUID=4321 PGID=4322 DOCKER_SOCKET="$T/no-such-socket"
-check "without a socket the supplementary groups are cleared, not guessed" 'grep -q "^setpriv --reuid=4321 --regid=4322 --clear-groups uvicorn" "$T/calls"'
 
 # ---------------------------------------------------------------------------
 echo "reviewer entrypoint"
