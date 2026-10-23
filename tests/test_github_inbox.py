@@ -70,7 +70,7 @@ def _proj(**policies):
 @pytest.mark.asyncio
 async def test_discover_reads_every_switched_on_source_and_one_failure_hides_nothing():
     gh = FakeGitHub(
-        prs=[_pr(1, "dependabot[bot]"), _pr(2, "renovate[bot]"), _pr(3, "danny")],
+        prs=[_pr(1, "dependabot[bot]"), _pr(2, "renovate[bot]"), {**_pr(3, "danny"), "author_association": "OWNER"}],
         reviews={3: [{"id": 5, "state": "CHANGES_REQUESTED", "user": {"login": "reviewer"}},
                      {"id": 6, "state": "APPROVED", "user": {"login": "other"}}],
                  1: [{"id": 7, "state": "CHANGES_REQUESTED", "user": {"login": "r"}},
@@ -1110,3 +1110,22 @@ def test_a_returning_dependabot_alert_gets_dependabot_advice_not_a_scanners():
     ci = {"kind": "ci_failures", "title": "ci failed", "url": "u", "summary": "s",
           "attempts": [{"task_id": "3320a0ee-x", "finished_at": 1000.0, "still_open": []}]}
     assert "still reports the check failing" in gi.build_goal(ci)
+
+
+
+@pytest.mark.asyncio
+async def test_an_outsiders_pull_request_is_not_a_review_item():
+    """A21 (2026-10-22): review requests had no author filter, so any
+    outsider's PR with a changes-requested review became work, and its body
+    reached the goal and the memory consolidation prompt."""
+    review = [{"id": 5, "state": "CHANGES_REQUESTED", "user": {"login": "maintainer"}}]
+    prs = [{**_pr(1, "stranger"), "author_association": "FIRST_TIME_CONTRIBUTOR"},
+           {**_pr(2, "colleague"), "author_association": "COLLABORATOR"},
+           {**_pr(3, "dependabot[bot]"), "author_association": "NONE"},
+           {**_pr(4, "someone"), "author_association": "CONTRIBUTOR"}]
+    gh = FakeGitHub(prs=prs, reviews={n: review for n in (1, 2, 3, 4)})
+    keys = {i.key for i in await gi.discover(gh, "proj", "o/proj", _proj(review_requests="propose"))}
+    assert keys == {"review:2", "review:3"}
+    keys = {i.key for i in await gi.discover(gh, "proj", "o/proj",
+                                             _proj(review_requests="propose") | {"authors": "anyone"})}
+    assert keys == {"review:1", "review:2", "review:3", "review:4"}, "the operator can widen it"

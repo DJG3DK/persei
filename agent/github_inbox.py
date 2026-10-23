@@ -186,6 +186,25 @@ def _opened_by_tektonix(pr: dict) -> bool:
     return bool(_OWN_BRANCH.match(str((pr.get("head") or {}).get("ref") or "")))
 
 
+# A pull request whose author is part of the repository. GitHub's own
+# author_association; the rest (CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, NONE...)
+# is anyone with an account.
+_INSIDE_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
+
+
+def _review_author_allowed(pr: dict, policy: str) -> bool:
+    """Whose pull request a requested-changes review may turn into work.
+    Review requests had no author filter: any outsider's PR with a review
+    asking for changes became an inbox item, its body went into a task's
+    goal, and from the episode into the consolidation prompt that writes
+    every later task's memory (audit A21, 2026-10-22). The project's author
+    setting applies as it does to Dependabot PRs, and the repository's own
+    people are always allowed -- their PRs are what reviews are mostly on."""
+    login = (pr.get("user") or {}).get("login")
+    return (_author_allowed(login, policy)
+            or str(pr.get("author_association") or "").upper() in _INSIDE_ASSOCIATIONS)
+
+
 def _author_allowed(login: str | None, policy: str) -> bool:
     login = login or ""
     if policy == "anyone":
@@ -228,6 +247,8 @@ async def discover(client: GitHubClient, repo: str, slug: str, proj: dict) -> li
     if policies["review_requests"] != "off":
         try:
             for pr in await _prs():
+                if not _review_author_allowed(pr, proj.get("authors", "dependabot")):
+                    continue
                 reviews = await client.reviews(slug, pr["number"])
                 # The latest review per reviewer decides; an approval after a
                 # changes-requested review cancels it.
