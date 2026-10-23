@@ -188,3 +188,11 @@ def test_a_restricted_user_gets_403_from_each_admin_route(method, path, monkeypa
     monkeypatch.setitem(srv.PROJECTS, "demo", {"live": "/nowhere", "sandbox": "/nowhere"})
     res = TestClient(srv.app).request(method, _fill(path))
     assert res.status_code == 403, f"{method} {path} answered {res.status_code} to a restricted user: {res.text[:200]}"
+
+
+def test_probe_script_path_exists():
+    # The route moved into agent/routers/ and kept a parent.parent that now
+    # stopped at agent/: every refresh was a FileNotFoundError 500.
+    from agent.routers import model_config
+
+    assert model_config.PROBE_SCRIPT.is_file()

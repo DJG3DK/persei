@@ -10,6 +10,7 @@ which includes this router, would be a cycle.
 from __future__ import annotations
 
 import os
+import sys
 
 from fastapi import APIRouter, Depends, Request
 
@@ -131,6 +132,11 @@ async def save_provider_pins(req: SaveProviderPinsRequest, user: User = Depends(
     return {"ok": True, "roles": await model_config.get_current_pins_priced()}
 
 
+# The repo root's scripts/, two levels above agent/routers/. The server's own
+# interpreter runs it: the bundle has no .venv.
+PROBE_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "probe_forced_tool_call.py"
+
+
 @router.post("/probe-forced-tool-call")
 async def probe_forced_tool_call(user: User = Depends(require_full_auth)):
     """Re-run the forced-tool-call probe and refresh the picker's allow-list.
@@ -144,10 +150,8 @@ async def probe_forced_tool_call(user: User = Depends(require_full_auth)):
     auth.require_admin(user)
     import asyncio as _asyncio
 
-    script = Path(__file__).resolve().parent.parent / "scripts" / "probe_forced_tool_call.py"
-    venv_py = Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python"
     proc = await _asyncio.create_subprocess_exec(
-        str(venv_py), str(script), "--all", "--concurrency", "8",
+        sys.executable, str(PROBE_SCRIPT), "--all", "--concurrency", "8",
         stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT,
     )
     try:
