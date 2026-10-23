@@ -1553,7 +1553,10 @@ mod tests {
             "ghcr.io/djg3dk/tektonix-agent:v0.9.0"
         );
         assert_eq!(local_name("reviewer"), "tektonix-reviewer:latest");
-        assert_eq!(IMAGES, ["agent", "router", "reviewer", "sandbox", "launcher"]);
+        assert_eq!(
+            IMAGES,
+            ["agent", "router", "reviewer", "sandbox", "launcher"]
+        );
     }
 
     #[test]
