@@ -35,6 +35,15 @@ agent can influence is not a gate.
    check whose command was missing is an infrastructure failure, escalated rather than handed to
    the agent as something to fix.
 
+   Then the **guards** (`guards.js`) read the diff for what a branch written to fool the model
+   would contain. A symlink out of the repository or to a secret, CI edited so a check passes or
+   stops running, and an existing test newly skipped are **blocking**: NEEDS_FIXES whatever the
+   model says. A test deleted or stripped of assertions, any other CI edit, and text addressed to
+   the reviewer are **flags**: each can be legitimate, so none blocks, but a READY carrying one is
+   parked for the operator's look instead of merging. `tests/test_reviewer_bad_branches.js`
+   runs a set of golden bad branches through the whole review with a model that approves
+   everything.
+
 4. **Review the diff.** One call, one `submit_review` tool call back. The model never writes or runs
    code; the mechanical work already happened. Besides the diff and commit messages it sees the
    prior round's findings, the agent's own **responses** to earlier rounds (written into the
@@ -96,6 +105,9 @@ worktree.js        the review checkout — setup, node_modules and dependency-di
                    provisioning, read-only binds, review secrets, cleanup, startup sweep
 checks.js          the mechanical checks, build, database job and secret scan, and whose
                    failures they are (infrastructure vs pre-existing vs this change's)
+guards.js          what the review decides from the diff without the model: symlinks to
+                   secrets, CI edited to skip checks, tests skipped, gutted or deleted,
+                   text addressed to the reviewer
 prompt.js          what the model is shown (diff packing, test and referenced files, the
                    agent's responses, untrusted fencing), the router call, and how its
                    answer is normalised and turned into the agent's message

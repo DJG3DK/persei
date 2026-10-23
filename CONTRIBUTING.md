@@ -107,6 +107,7 @@ node tests/test_health_projects.js
 node tests/test_reviewer_projects_reload.js
 node tests/test_bare_project_entry.js
 node tests/test_sw_push.js
+node tests/test_reviewer_bad_branches.js
 # needs root: it borrows a directory the way the reviewer does, writes
 # through it and requires EROFS. Without root those cases skip.
 sudo REQUIRE_MOUNT_TESTS=1 node tests/test_reviewer_dependency_dirs.js

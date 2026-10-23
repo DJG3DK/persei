@@ -268,6 +268,10 @@ jobs:
           node tests/test_reviewer_projects_reload.js
           node tests/test_bare_project_entry.js
           node tests/test_sw_push.js
+          # Golden bad branches through the real reviewProject, with the
+          # sandbox and the model stubbed through fetch: no network, no paid
+          # call. What it asserts is what the gate decides without a model.
+          node tests/test_reviewer_bad_branches.js
 
       - name: Reviewer dependency mounts (as root — the read-only proof)
         # This one needs real bind mounts: it borrows a directory the way the

@@ -1213,12 +1213,24 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
     # check is what makes approval safe against races: an approval can only
     # ever ship the exact commit the operator was shown, never one that
     # landed after they looked.
-    if state.get("require_merge_review") and state.get("merge_approved_sha") != sha:
+    #
+    # A READY the reviewer's guards FLAGGED parks here too, whatever the
+    # setting: a test deleted or gutted, CI edited, text in the diff addressed
+    # to the reviewer model (services/commit-reviewer/guards.js). Each can be
+    # legitimate, so none blocks -- and each is what a branch written to get
+    # past a model reviewer would contain, so none merges unseen. A benchmark
+    # has no operator to park for; its flags stay on the recorded verdict.
+    flags = [] if (PROJECTS.get(repo) or {}).get("benchmark") else list(review.get("flags") or [])
+    if (state.get("require_merge_review") or flags) and state.get("merge_approved_sha") != sha:
+        flagged = "".join(f"\n- {f.get('guard', 'flag')}: {f.get('file') or ''} {f.get('issue', '')}".rstrip()
+                          for f in flags)
         pause_entry = {
             "node": "verify_and_ship",
             "step_id": None,
-            "summary": "review READY — waiting for operator's final look before merge",
-            "detail": f"sha {sha[:12]} approved by the review service; merge is parked on your decision.",
+            "summary": ("review READY with flags — the operator must look before merge" if flags
+                        else "review READY — waiting for operator's final look before merge"),
+            "detail": (f"sha {sha[:12]} approved by the review service; merge is parked on your decision."
+                       + (f"\n\nThe review's guards flagged:{flagged}" if flags else "")),
             "cost_usd": 0.0,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
