@@ -29,10 +29,14 @@ import base64
 import json
 import logging
 import os
+from collections.abc import Callable
+from typing import Any, cast
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from agent import paths
+# files.py's sandbox resolver, shared on purpose: one rule for what a path may reach.
+# pyright: reportPrivateUsage=false
 from agent.tools.files import PathEscapeError, _resolve
 from agent.tools.tool_errors import tool_errors_to_text
 
@@ -64,7 +68,7 @@ def installed() -> bool:
     return BRIDGE.is_file() and (BRIDGE.parent / "node_modules" / "@mcpware" / "logoloom").is_dir()
 
 
-async def _call(op: str, args: dict) -> dict:
+async def _call(op: str, args: dict[str, Any]) -> dict[str, Any]:
     """One bridge process per call. Returns the parsed JSON, always a dict."""
     if not BRIDGE.is_file():
         raise LogoLoomUnavailable(
@@ -89,7 +93,9 @@ async def _call(op: str, args: dict) -> dict:
         parsed = json.loads(out[:_MAX_OUTPUT].decode("utf-8", "replace"))
     except ValueError:
         raise LogoLoomUnavailable(f"{op} returned something that is not JSON") from None
-    return parsed if isinstance(parsed, dict) else {"success": False, "error": "unexpected reply"}
+    if isinstance(parsed, dict):
+        return cast(dict[str, Any], parsed)
+    return {"success": False, "error": "unexpected reply"}
 
 
 def _svg_arg(svg: str) -> str | None:
@@ -132,7 +138,7 @@ def _drop_traced_background(svg: str) -> tuple[str, str | None]:
     return svg[:m.start()] + svg[m.end():], f"#{fill.group(1).upper()}"
 
 
-def _fmt(op: str, result: dict) -> str:
+def _fmt(op: str, result: dict[str, Any]) -> str:
     if not result.get("success"):
         return f"ERROR: {op} failed: {result.get('error') or 'no reason given'}"
     return ""
@@ -152,7 +158,7 @@ def _fmt(op: str, result: dict) -> str:
 RENDERS_BEFORE_SHOWING = 3
 
 
-def new_show_state() -> dict:
+def new_show_state() -> dict[str, Any]:
     """Shared by one seat's logo_render and show_images: renders since the
     operator last saw anything. Built per turn, so each message resets it."""
     return {"renders_since_show": 0}
@@ -163,8 +169,8 @@ def new_show_state() -> dict:
 INLINE_SVG_LIMIT = 6_000
 
 
-def make_logo_tools(root_for_writes=None, *, can_export: bool = True, show_state: dict | None = None,
-                    repo: str | None = None) -> list:
+def make_logo_tools(root_for_writes: Callable[[], str] | None = None, *, can_export: bool = True,
+                    show_state: dict[str, Any] | None = None, repo: str | None = None) -> list[BaseTool]:
     """The logo toolset.
 
     `root_for_writes` is a callable returning the directory writes are
@@ -181,7 +187,7 @@ def make_logo_tools(root_for_writes=None, *, can_export: bool = True, show_state
 
     from agent import artifacts  # noqa: PLC0415
 
-    def _source(svg: str, draft: str) -> tuple[str | None, str | None]:
+    def _source(svg: str, draft: str) -> tuple[str, None] | tuple[None, str]:
         """(markup, None) from `draft` or `svg`, or (None, an error to return)."""
         if (draft or "").strip():
             if not repo:
@@ -226,9 +232,10 @@ def make_logo_tools(root_for_writes=None, *, can_export: bool = True, show_state
         Returns the converted SVG (or, when it is large, a draft id). Run
         logo_optimize_svg on the result.
         """
-        svg, bad = _source(svg, draft)
-        if bad:
-            return bad
+        src = _source(svg, draft)
+        if src[0] is None:
+            return src[1]
+        svg = src[0]
         r = await _call("text_to_path", {"svg": svg, "fontPath": font_path or None})
         err = _fmt("text_to_path", r)
         if err:
@@ -246,9 +253,10 @@ def make_logo_tools(root_for_writes=None, *, can_export: bool = True, show_state
 
         Returns the optimised SVG (or a draft id when large) and what it saved.
         """
-        svg, bad = _source(svg, draft)
-        if bad:
-            return bad
+        src = _source(svg, draft)
+        if src[0] is None:
+            return src[1]
+        svg = src[0]
         r = await _call("optimize_svg", {"svg": svg, "aggressive": aggressive})
         err = _fmt("optimize_svg", r)
         if err:
@@ -277,9 +285,10 @@ def make_logo_tools(root_for_writes=None, *, can_export: bool = True, show_state
 
         Returns a description of the rendered image.
         """
-        svg, bad = _source(svg, draft)
-        if bad:
-            return bad
+        src = _source(svg, draft)
+        if src[0] is None:
+            return src[1]
+        svg = src[0]
         if show_state is not None:
             if show_state["renders_since_show"] >= RENDERS_BEFORE_SHOWING:
                 return (
@@ -374,9 +383,10 @@ def make_logo_tools(root_for_writes=None, *, can_export: bool = True, show_state
         """
         import re  # noqa: PLC0415
 
-        base, bad = _source("", draft)
-        if bad:
-            return bad
+        src = _source("", draft)
+        if src[0] is None:
+            return src[1]
+        base = src[0]
         m = re.search(r"<svg\b([^>]*)>(.*)</svg>", base, re.S | re.I)
         if not m:
             return f"ERROR: draft {draft} has no <svg> ... </svg> to wrap"
@@ -417,9 +427,10 @@ def make_logo_tools(root_for_writes=None, *, can_export: bool = True, show_state
 
         Returns the list of files written.
         """
-        svg, bad = _source(svg, draft)
-        if bad:
-            return bad
+        src = _source(svg, draft)
+        if src[0] is None:
+            return src[1]
+        svg = src[0]
         if root_for_writes is None:
             return "ERROR: this seat has no project to write into"
         if not (name or "").strip():
@@ -433,7 +444,7 @@ def make_logo_tools(root_for_writes=None, *, can_export: bool = True, show_state
         os.makedirs(out, exist_ok=True)
 
         colors = {k: v for k, v in (("primary", primary), ("secondary", secondary)) if v}
-        args = {"svg": svg, "outputDir": str(out), "name": name}
+        args: dict[str, Any] = {"svg": svg, "outputDir": str(out), "name": name}
         if colors:
             args["colors"] = colors
         if dark_svg.strip():
@@ -442,7 +453,7 @@ def make_logo_tools(root_for_writes=None, *, can_export: bool = True, show_state
         err = _fmt("export_brand_kit", r)
         if err:
             return err
-        files = r.get("files") or []
+        files: list[Any] = r.get("files") or []
         listing = "\n".join(f"  {output_dir.rstrip('/')}/{f}" for f in files)
         return (f"Wrote {len(files)} files to {output_dir!r}:\n{listing}\n\n"
                 f"These are binary assets in the repo -- commit them with the change that "

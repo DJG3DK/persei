@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from typing import Any
 
 from deepagents.backends.utils import create_file_data
 from langgraph.store.base import BaseStore
@@ -32,7 +33,7 @@ from agent.deep_agent import EPISODES_ROUTE, episodes_namespace
 logger = logging.getLogger("tektonix")
 
 
-async def write_episode(store: BaseStore, config: Config, repo: str, record: dict) -> str:
+async def write_episode(store: BaseStore, config: Config, repo: str, record: dict[str, Any]) -> str:
     """Append-only: each episode gets its own timestamped key, never
     overwritten. namespace is (episodes, repo) -- shared across every task
     for this project, so the consolidation agent can list and read them all

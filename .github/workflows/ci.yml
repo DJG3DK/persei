@@ -89,6 +89,13 @@ jobs:
         # a contributor's.
         run: ruff --version && ruff check .
 
+      - name: Type check (pyright)
+        # Strict on the modules listed under "strict" in pyrightconfig.json,
+        # basic on the rest of agent/. The version is the one requirements.txt
+        # pins; the pip package downloads that pyright release and runs it on
+        # the runner's node.
+        run: pyright --version && pyright
+
       # No .env is created on purpose. conftest.py supplies placeholder values
       # via setdefault, so this run also proves a fresh clone can run the suite
       # — the exact thing that was broken (H4).

@@ -24,8 +24,11 @@ import contextlib
 import ipaddress
 import logging
 import socket
+from typing import Any
 from urllib.parse import urlsplit
 
+# One address policy for both egress paths, so the proxy reuses url_guard's.
+# pyright: reportPrivateUsage=false
 from agent.tools.url_guard import _is_blocked_address
 
 logger = logging.getLogger("tektonix")
@@ -71,7 +74,7 @@ class EgressProxy:
         self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
         return self
 
-    async def __aexit__(self, *exc) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         assert self._server is not None
         self._server.close()
         for w in list(self._writers):
@@ -85,7 +88,7 @@ class EgressProxy:
         port = self._server.sockets[0].getsockname()[1]
         return f"http://127.0.0.1:{port}"
 
-    def launch_kwargs(self) -> dict:
+    def launch_kwargs(self) -> dict[str, Any]:
         # <-loopback> removes Chromium's implicit loopback bypass, so
         # http://127.0.0.1/ and http://localhost/ come here like anything else.
         return {"proxy": {"server": self.url, "bypass": "<-loopback>"}}
@@ -109,7 +112,8 @@ class EgressProxy:
             infos = await asyncio.to_thread(socket.getaddrinfo, host, port, 0, socket.SOCK_STREAM)
         except socket.gaierror as e:
             raise EgressBlocked(f"could not resolve {host}: {e}") from e
-        addresses = list(dict.fromkeys(info[4][0] for info in infos))
+        # An inet sockaddr's host is always a str; str() pins that for the type checker.
+        addresses = list(dict.fromkeys(str(info[4][0]) for info in infos))
         if not addresses:
             raise EgressBlocked(f"{host} resolved to no addresses")
         bad = [a for a in addresses if _is_blocked_address(a)]
@@ -187,7 +191,8 @@ async def _pump(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
             await dst.drain()
 
 
-async def _splice(a_reader, a_writer, b_reader, b_writer) -> None:
+async def _splice(a_reader: asyncio.StreamReader, a_writer: asyncio.StreamWriter,
+                  b_reader: asyncio.StreamReader, b_writer: asyncio.StreamWriter) -> None:
     """Bytes both ways until either side closes, then both are closed."""
     tasks = {asyncio.create_task(_pump(a_reader, b_writer)), asyncio.create_task(_pump(b_reader, a_writer))}
     try:

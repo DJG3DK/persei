@@ -31,10 +31,12 @@ Three things keep that narrow:
 """
 from __future__ import annotations
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from agent.config import PROJECTS
 from agent.tools.files import PathEscapeError, read_file
+# files.py's sandbox resolver, shared on purpose: one rule for what a path may reach.
+# pyright: reportPrivateUsage=false
 from agent.tools.files import _resolve
 from agent.tools.planning_tools import run_find, run_search
 from agent.tools.tool_errors import tool_errors_to_text
@@ -86,7 +88,7 @@ def _root(repo: str, own_repo: str, readable: list[str]) -> str:
     return root
 
 
-def make_reference_tools(own_repo: str, readable: list[str] | None) -> list:
+def make_reference_tools(own_repo: str, readable: list[str] | None) -> list[BaseTool]:
     """Read-only tools for the OTHER projects this task may look at.
 
     Returns an empty list when there are none, so a deployment with one

@@ -53,13 +53,14 @@ python3 --version   # 3.12+
 The exact five jobs CI runs, in order, from a clean clone:
 
 ```bash
-# 1. Python -- the suite plus lint. No network, no database, no .env needed.
+# 1. Python -- the suite, lint and type check. No network, no database, no .env needed.
 #    The planner's repo search shells out to ripgrep, so its tests need `rg`.
 #    The model router is its own service; its tests and lint run here too.
 python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
 npm ci --prefix services/agent-review --omit=dev --no-audit --no-fund
 .venv/bin/python -m pytest -q
 .venv/bin/ruff check .
+.venv/bin/pyright
 .venv/bin/python -m pytest -q services/model-router/tests
 .venv/bin/ruff check services/model-router
 .venv/bin/python -m compileall -q scripts/ agent/

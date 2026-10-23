@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from agent.config import Config
 
 logger = logging.getLogger("tektonix")
 
@@ -46,8 +50,8 @@ async def all_closed(token: str, slug: str, numbers: list[int]) -> bool | None:
     client = GitHubClient(token)
     try:
         for n in numbers:
-            alert = await client.get(f"/repos/{slug}/dependabot/alerts/{n}")
-            if (alert or {}).get("state", "open") not in _FIXED_STATES:
+            alert: dict[str, Any] = await client.get(f"/repos/{slug}/dependabot/alerts/{n}") or {}
+            if alert.get("state", "open") not in _FIXED_STATES:
                 return False
     except Exception as e:  # noqa: BLE001 -- unknown, not closed
         logger.info("inbox alerts: could not read %s alerts %s: %s", slug, numbers, e)
@@ -55,7 +59,7 @@ async def all_closed(token: str, slug: str, numbers: list[int]) -> bool | None:
     return bool(numbers)
 
 
-async def already_fixed(repo: str, goal: str, config) -> str | None:
+async def already_fixed(repo: str, goal: str, config: Config) -> str | None:
     """A sentence when every alert this task was created for is closed, else
     None. Reads the project's own token from the GitHub settings."""
     slug, numbers = alerts_referenced(goal)

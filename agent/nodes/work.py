@@ -68,11 +68,17 @@ the dashboard to render and an operator to act on.
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterable
+from typing import Any, cast
 
 import openai
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain.agents.middleware.types import InputAgentState
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.config import get_stream_writer
-from langgraph.types import Command
+from langgraph.store.base import BaseStore
+from langgraph.types import Command, StreamWriter
 
 from agent.config import Config
 from agent.harness_voice import HARNESS, harness, marked
@@ -84,10 +90,13 @@ from agent import plan_progress
 from agent import tool_events
 from agent.tools import bash_advice
 from agent.messages import pop_messages
-from agent.middleware.budget_guard import BudgetExceededError
+from agent.middleware.budget_guard import BudgetExceededError, BudgetTracker
 from agent.model_config import resolve_alias
 from agent.outer_state import AgentState
 from agent.tools.router_ledger import RouterLedger
+# work_node imports _claim_workspace: tools/git.py's own workspace bookkeeping,
+# shared with the node that owns the workspace rather than made public.
+# pyright: reportPrivateUsage=false
 
 logger = logging.getLogger("tektonix")
 
@@ -113,7 +122,7 @@ STREAMED_IDS_MAX = 20_000
 REJECTED_RETRY_BACKOFF_S = 5
 
 
-def inner_thread_config(task_id: str, repo: str, generation: int = 0) -> dict:
+def inner_thread_config(task_id: str, repo: str, generation: int = 0) -> RunnableConfig:
     # metadata/tags -- standard RunnableConfig fields LangChain's tracer
     # picks up automatically, so a task's inner (deep-agent) trace is
     # filterable the same way its outer-graph trace is.
@@ -135,7 +144,7 @@ def inner_thread_config(task_id: str, repo: str, generation: int = 0) -> dict:
     }
 
 
-def _translate_message(task_id: str, node_label: str, msg) -> dict | None:
+def _translate_message(task_id: str, node_label: str, msg: object) -> dict[str, Any] | None:
     """One LangChain message -> one LogEntry-shaped custom event, for the
     dashboard's live view. Message-type-based rather than node-name-based --
     this is what identifies a real model turn vs. a tool result, regardless
@@ -162,7 +171,7 @@ def _translate_message(task_id: str, node_label: str, msg) -> dict | None:
         # it was when this process started. See resolve_alias's own
         # docstring for the incident that made staleness here a real bug,
         # not a hypothetical one.
-        response_metadata = getattr(msg, "response_metadata", None) or {}
+        response_metadata: dict[str, Any] = getattr(msg, "response_metadata", None) or {}
         alias = response_metadata.get("model_name") or response_metadata.get("model")
         model = resolve_alias(alias)
         return {
@@ -210,8 +219,9 @@ def _translate_message(task_id: str, node_label: str, msg) -> dict | None:
     return None
 
 
-async def _consume_values(task_id: str, node_label: str, proj, writer, seen: dict, tracker=None,
-                          seen_ids: set | None = None, final_text: dict | None = None) -> None:
+async def _consume_values(task_id: str, node_label: str, proj: AsyncIterable[Any], writer: StreamWriter,
+                          seen: dict[str, Any], tracker: BudgetTracker | None = None,
+                          seen_ids: set[str] | None = None, final_text: dict[str, Any] | None = None) -> None:
     """Drains one `run.values`-shaped projection (root or a subagent handle),
     translating newly-seen messages/todos into custom events as they land.
     `seen` is a per-projection dict (`{"todos": Any, "cost": float}`) so
@@ -234,20 +244,21 @@ async def _consume_values(task_id: str, node_label: str, proj, writer, seen: dic
     only when the number actually moved, so it adds no chatter to an idle
     stream.
     """
-    async for values in proj:
-        if not isinstance(values, dict):
+    async for snapshot in proj:
+        if not isinstance(snapshot, dict):
             continue
+        values = cast(dict[str, Any], snapshot)
         todos = values.get("todos")
         if node_label == "work" and todos is not None and todos != seen.get("todos"):
             seen["todos"] = todos
             writer({"type": "todos", "todos": todos})
-        messages = values.get("messages") or []
+        messages: list[Any] = values.get("messages") or []
         # By identity, not by count: after SummarizationMiddleware compacts
         # the thread the list is SHORTER than the count already published,
         # and a count-based check goes silent until the thread regrows past
         # it -- the "no movement for 20 minutes" reports of 2026-09-09 on a
         # coder that was calling every 40 seconds (same fix in planning_chat).
-        ids = seen_ids if seen_ids is not None else seen.setdefault("msg_ids", set())
+        ids: set[str] = seen_ids if seen_ids is not None else seen.setdefault("msg_ids", set())
         for msg in messages:
             key = str(getattr(msg, "id", None) or f"obj:{id(msg)}")
             if key in ids:
@@ -261,8 +272,10 @@ async def _consume_values(task_id: str, node_label: str, proj, writer, seen: dic
             if final_text is not None and node_label == "work" and isinstance(msg, AIMessage):
                 # Counted for the ship gate: a benchmark fix does not ship
                 # without the independent verifier having looked at it.
-                for call in getattr(msg, "tool_calls", None) or []:
-                    if call.get("name") == "task" and (call.get("args") or {}).get("subagent_type") == "verifier":
+                calls: list[Any] = getattr(msg, "tool_calls", None) or []
+                for call in calls:
+                    args: dict[str, Any] = call.get("args") or {}
+                    if call.get("name") == "task" and args.get("subagent_type") == "verifier":
                         final_text["verifier_calls"] = final_text.get("verifier_calls", 0) + 1
                 text = content_text(msg.content).strip()
                 # An empty reply (no text, no tool call) ends the agent's
@@ -316,7 +329,7 @@ def _reconciled_cost(state: AgentState) -> float:
     return checkpointed
 
 
-async def _generated_rules(repo: str) -> list[dict]:
+async def _generated_rules(repo: str) -> list[dict[str, Any]]:
     """The reviewer's `generated` rules for this project (review_gate's cached
     /projects read); none when it cannot be reached."""
     try:
@@ -335,7 +348,8 @@ def _template_sync_lock(repo: str):
     return _TEMPLATE_SYNC_LOCKS[repo]
 
 
-async def work_node(state: AgentState, app_config: Config, checkpointer, pg_store) -> dict:
+async def work_node(state: AgentState, app_config: Config, checkpointer: BaseCheckpointSaver[Any],
+                    pg_store: BaseStore) -> dict[str, Any]:
     # Parameter names `app_config`/`pg_store` are deliberate, not stylistic:
     # LangGraph auto-injects its own runtime object into any node parameter
     # literally named `config` (when unannotated or annotated
@@ -419,7 +433,7 @@ async def work_node(state: AgentState, app_config: Config, checkpointer, pg_stor
         print(f"[work] {repo}: regenerated in {task_id}'s workspace -> {regenerated}")
     if ws.get("created"):
         await _claim_workspace(workspace, task_id)
-        populated = ws.get("populated") or {}
+        populated: dict[str, Any] = ws.get("populated") or {}
         print(f"[work] {repo}: workspace for {task_id} at {workspace} "
               f"({'from ' + ws['base'] if ws.get('base') else 'on its existing branch'}; "
               f"{len(populated.get('linked', []))} linked, {len(populated.get('copied', []))} copied, "
@@ -453,7 +467,7 @@ async def work_node(state: AgentState, app_config: Config, checkpointer, pg_stor
                 f"(`git show {restored['backup']}` to read it); do not try to merge or check it out."
             )
 
-    async def _build(route: str, starting_cost: float, last_failed_edit):
+    async def _build(route: str, starting_cost: float, last_failed_edit: str | None):
         return await build_deep_agent(
             app_config,
             repo,
@@ -502,9 +516,9 @@ async def work_node(state: AgentState, app_config: Config, checkpointer, pg_stor
         # Case 0 -- see module docstring. Takes priority over everything
         # else: an approval decision resumes the same paused turn, it
         # doesn't make sense alongside a fresh goal/feedback message.
-        graph_input = Command(resume={"decisions": approval_decision})
+        graph_input: InputAgentState | Command[Any] | None = Command(resume={"decisions": approval_decision})
     else:
-        messages: list = []
+        messages: list[AnyMessage | dict[str, Any]] = []
         if pending_feedback:
             messages.append(HumanMessage(content=marked(pending_feedback)))
         elif state["iteration_count"] == 0:
@@ -532,9 +546,9 @@ async def work_node(state: AgentState, app_config: Config, checkpointer, pg_stor
     # The coordinator's closing prose, collected as it streams. Declared out
     # here, not inside the stream block, so the enrichment below can always
     # read it -- same reasoning as subagent_tasks.
-    final_text: dict = {}
-    latest_todos: list | None = None
-    pending_approval: dict | None = None
+    final_text: dict[str, Any] = {}
+    latest_todos: list[Any] | None = None
+    pending_approval: dict[str, Any] | None = None
 
     # Surfaces live progress through the outer graph's own custom-event
     # channel -- server.py's _stream_graph republishes these to the
@@ -553,12 +567,12 @@ async def work_node(state: AgentState, app_config: Config, checkpointer, pg_stor
     # to `except`, skipping the in-try join and leaving already-spawned
     # subagent tasks running detached. `finally` guarantees every task gets
     # cancelled and drained on every exit path.
-    subagent_tasks: list[asyncio.Task] = []
+    subagent_tasks: list[asyncio.Task[None]] = []
     # The first attempt sends this pass's input; a retry after a transient
     # model failure sends None, which resumes the inner thread from its last
     # checkpoint -- the conversation, and the files it changed, carry on from
     # where the failed call left them.
-    stream_input = graph_input
+    stream_input: InputAgentState | Command[Any] | None = graph_input
     model_failures = 0
     rejected = 0
     on_fallback = False
@@ -568,14 +582,18 @@ async def work_node(state: AgentState, app_config: Config, checkpointer, pg_stor
     # projection's entire history (a subagent handle arriving; and, on every
     # pass that continued the thread, the first state snapshot: 360 of a
     # task's 999 log entries were its first pass logged twice, 2026-09-26).
-    seen_ids: set = set(state.get("streamed_message_ids") or [])
+    seen_ids: set[str] = set(state.get("streamed_message_ids") or [])
     try:
         while True:
             try:
-                async with await agent.astream_events(stream_input, config=inner_config, version="v3") as run:
-                    root_seen: dict = {}
+                # langgraph types astream_events' input as a bare `Command`, which
+                # strict mode reads as partially unknown: a stub gap, not ours.
+                async with await agent.astream_events(  # pyright: ignore[reportUnknownMemberType]
+                        stream_input, config=inner_config, version="v3") as run:
+                    root_seen: dict[str, Any] = {}
 
-                    async def _consume_subagents(seen_ids: set = seen_ids, tracker=tracker) -> None:
+                    async def _consume_subagents(seen_ids: set[str] = seen_ids,
+                                                 tracker: BudgetTracker = tracker) -> None:
                         async for handle in run.subagents:
                             label = f"work:{handle.name or 'subagent'}"
                             subagent_tasks.append(
@@ -735,9 +753,9 @@ async def work_node(state: AgentState, app_config: Config, checkpointer, pg_stor
         # otherwise hold the task open (see agent/plan_progress.py).
         latest_todos = plan_progress.merge_todos(state.get("latest_todos"), latest_todos)
         if not escalated:
-            messages = final_state.values.get("messages", [])
-            if messages:
-                final_summary = content_text(messages[-1].content)[:2000]
+            final_messages: list[Any] = final_state.values.get("messages", [])
+            if final_messages:
+                final_summary = content_text(final_messages[-1].content)[:2000]
     except Exception:  # noqa: BLE001 -- best-effort enrichment, never worth failing the whole node over
         pass
 

@@ -31,6 +31,8 @@ special case: it derives from BaseException, not Exception.
 
 import functools
 import inspect
+from collections.abc import Callable
+from typing import Any, cast
 
 from langgraph.errors import GraphBubbleUp
 
@@ -50,7 +52,7 @@ def _describe(name: str, e: Exception) -> str:
     )
 
 
-def tool_errors_to_text(fn):
+def tool_errors_to_text[F: Callable[..., Any]](fn: F) -> F:
     """Wrap a tool's underlying function so no Exception escapes it.
 
     Apply BELOW @tool -- decorators run bottom-up, so @tool builds its schema
@@ -66,21 +68,22 @@ def tool_errors_to_text(fn):
     """
     if inspect.iscoroutinefunction(fn):
         @functools.wraps(fn)
-        async def async_wrapper(*args, **kwargs):
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return await fn(*args, **kwargs)
             except GraphBubbleUp:
                 raise
             except Exception as e:  # noqa: BLE001 -- the entire point: nothing escapes a tool
                 return _describe(fn.__name__, e)
-        return async_wrapper
+        # A tool returns text either way, so the wrapper stands in for fn.
+        return cast(F, async_wrapper)
 
     @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
         except GraphBubbleUp:
             raise
         except Exception as e:  # noqa: BLE001
             return _describe(fn.__name__, e)
-    return wrapper
+    return cast(F, wrapper)

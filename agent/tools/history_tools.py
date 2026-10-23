@@ -35,10 +35,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from agent import episode_recall, history_index
 from agent.config import PROJECTS
+# The read window is reference_tools' own, shared so both readers page alike.
+# pyright: reportPrivateUsage=false
 from agent.tools.reference_tools import _READ_CAP_CHARS, _READ_MIN_WINDOW, check_readable
 from agent.tools.tool_errors import tool_errors_to_text
 
@@ -124,10 +126,10 @@ def _without_prefix(label: str, prefix: str | None) -> str:
     return label
 
 
-def _digest_entry(n: int, hit) -> str:
+def _digest_entry(n: int, hit: episode_recall.EpisodeHit) -> str:
     extra = hit.extra or {}
     when = extra.get("occurred_at")
-    corpus = _CORPUS_WORD.get(extra.get("corpus"), str(extra.get("corpus") or "?"))
+    corpus = _CORPUS_WORD.get(extra.get("corpus") or "", str(extra.get("corpus") or "?"))
     # The other corpora describing this same task, named rather than given
     # slots of their own -- see history_index._fold_by_task.
     also = [_CORPUS_WORD.get(c, str(c)) for c in extra.get("also") or ()]
@@ -168,8 +170,8 @@ def _digest_entry(n: int, hit) -> str:
     return "\n".join(lines)
 
 
-def make_history_tools(own_repo: str, readable: list[str] | None, store, *,
-                       none_means_all: bool = False, task_id: str | None = None) -> list:
+def make_history_tools(own_repo: str, readable: list[str] | None, store: object, *,
+                       none_means_all: bool = False, task_id: str | None = None) -> list[BaseTool]:
     """The two history tools, or nothing when this installation has no index.
 
     `store` is handed to the recall registry rather than used here: the leg

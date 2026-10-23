@@ -99,3 +99,7 @@ pywebpush==2.5.0
 
 # Lint. Configured in ruff.toml; enforced in CI.
 ruff==0.17.1
+
+# Type checking. Configured in pyrightconfig.json; enforced in CI. The pip
+# package fetches the matching pyright release on first run and needs node.
+pyright==1.1.414

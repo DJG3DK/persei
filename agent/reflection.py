@@ -33,6 +33,10 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent.config import Config
 
 logger = logging.getLogger("tektonix")
 
@@ -109,8 +113,8 @@ def as_feedback(note: str) -> str:
     )
 
 
-async def reflect(config, *, task_id: str, goal: str, kind: str, feedback: str, touched: str,
-                  earlier: list[str], model=None) -> str | None:
+async def reflect(config: Config, *, task_id: str, goal: str, kind: str, feedback: str, touched: str,
+                  earlier: list[str], model: Any = None) -> str | None:
     """One short call. None on any failure: reflection is never in the way."""
     from langchain_core.messages import HumanMessage
 

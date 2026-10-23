@@ -30,7 +30,12 @@ Three checks, because any one alone is bypassable:
 
 import ipaddress
 import socket
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:
+    from playwright.async_api import Request, Route
 
 ALLOWED_SCHEMES = {"http", "https"}
 
@@ -107,7 +112,8 @@ async def assert_public_url(raw_url: str) -> str:
     except socket.gaierror as e:
         raise UnsafeUrlError(f"could not resolve {host!r}: {e}") from e
 
-    addresses = {info[4][0] for info in infos}
+    # An inet sockaddr's host is always a str; str() pins that for the type checker.
+    addresses = {str(info[4][0]) for info in infos}
     if not addresses:
         raise UnsafeUrlError(f"{host!r} resolved to no addresses")
     # EVERY address must be public: a name with both a public and a private
@@ -120,7 +126,8 @@ async def assert_public_url(raw_url: str) -> str:
     return raw_url
 
 
-def make_route_guard(on_block=None, allow_origin: str | None = None):
+def make_route_guard(on_block: Callable[[str, str], object] | None = None,
+                     allow_origin: str | None = None) -> Callable[["Route", "Request"], Awaitable[None]]:
     """A Playwright route handler that applies the same check to EVERY
     request a page makes -- the initial navigation, each redirect hop, and
     every subresource.
@@ -138,7 +145,7 @@ def make_route_guard(on_block=None, allow_origin: str | None = None):
     the public check.
     """
 
-    async def handler(route, request):
+    async def handler(route: "Route", request: "Request") -> None:
         if allow_origin and _same_origin(request.url, allow_origin):
             await route.continue_()
             return

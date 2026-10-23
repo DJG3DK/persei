@@ -36,8 +36,10 @@ def _norm(text: str) -> str:
 
 def _files_and_lines(diff: str) -> list[tuple[str, list[str], list[str]]]:
     """(path, added lines, removed lines) per file of a unified diff."""
-    out = []
-    path, added, removed = None, [], []
+    out: list[tuple[str, list[str], list[str]]] = []
+    path: str | None = None
+    added: list[str] = []
+    removed: list[str] = []
     for line in diff.splitlines():
         if line.startswith("+++ "):
             if path is not None:

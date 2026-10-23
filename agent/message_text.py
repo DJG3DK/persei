@@ -22,7 +22,7 @@ and thinking/reasoning blocks are model-internal.
 """
 
 
-def content_text(content) -> str:
+def content_text(content: object) -> str:
     """The joined text of a message's content -- '' if it has none."""
     if content is None:
         return ""

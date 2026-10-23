@@ -27,10 +27,12 @@ this box.
 
 import os
 import subprocess
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from agent.tools.egress_proxy import REFUSED_HEADER, EgressProxy
 from agent.tools.url_guard import UnsafeUrlError, assert_public_url, make_route_guard
@@ -38,9 +40,14 @@ from agent.tools.url_guard import UnsafeUrlError, assert_public_url, make_route_
 from agent import runtime_settings as _rs
 from agent.config import PROJECTS
 from agent.tools.files import BinaryFileError, PathEscapeError, read_file
+# pyright: reportPrivateUsage=false
+# files.py's path resolver is shared on purpose: same sandboxing rules, one implementation.
 from agent.tools.files import _resolve, own_space_redirect
 from agent.tools.tool_errors import tool_errors_to_text
 from agent.tools.vision import describe_image_bytes
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page, ViewportSize
 
 # audit M-8: --ignore-certificate-errors removed -- this browser renders
 # attacker-influenced pages (browse_page on a model-chosen URL, live Bing
@@ -92,23 +99,23 @@ _READ_MIN_WINDOW = 500
 
 
 @asynccontextmanager
-async def _browser_page(viewport=None, allow_origin: str | None = None):
+async def _browser_page(viewport: "ViewportSize | None" = None,
+                        allow_origin: str | None = None) -> AsyncGenerator[tuple["Page", EgressProxy], None]:
     """One headless Chromium page per call -- tool calls here are
     infrequent enough (a handful per planning turn, not a hot loop) that
     launching fresh each time is simpler and safer than managing a shared
     long-lived browser instance across concurrent planning sessions.
 
     The browser reaches the network only through EgressProxy, which connects
-    to the address it checked (agent/tools/egress_proxy.py). The page carries
-    the proxy as `page.egress` so a caller can say why a load failed."""
+    to the address it checked (agent/tools/egress_proxy.py). The proxy comes
+    back beside the page so a caller can say why a load failed."""
     from playwright.async_api import async_playwright
 
     async with EgressProxy(allow_origin=allow_origin) as proxy, async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=_LAUNCH_ARGS, **proxy.launch_kwargs())
         try:
             page = await browser.new_page(user_agent=_USER_AGENT, viewport=viewport or {"width": 1280, "height": 800})
-            page.egress = proxy
-            yield page
+            yield page, proxy
         finally:
             await browser.close()
 
@@ -196,7 +203,7 @@ async def _run_browse_page(url: str, want_screenshot: bool, question: str,
 
     blocked: list[str] = []
 
-    async with _browser_page(allow_origin=allow_origin) as page:
+    async with _browser_page(allow_origin=allow_origin) as (page, egress):
         await page.route("**/*", make_route_guard(
             lambda u, why: blocked.append(f"{u} ({why})"), allow_origin=allow_origin))
         try:
@@ -206,14 +213,14 @@ async def _run_browse_page(url: str, want_screenshot: bool, question: str,
             # asyncio.TimeoutError subclass), otherwise this was a dead branch.
             return f"ERROR: timed out loading {url!r} (over {_NAV_TIMEOUT_MS // 1000}s)"
         except Exception as e:  # noqa: BLE001 -- bad URL, DNS failure, refused connection, etc.
-            if page.egress.blocked:
-                return f"ERROR: blocked: {url!r} reached a non-public address -- {page.egress.blocked[0]}"
+            if egress.blocked:
+                return f"ERROR: blocked: {url!r} reached a non-public address -- {egress.blocked[0]}"
             return f"ERROR: failed to load {url!r}: {e}"
 
         if blocked and not page.url.startswith(("http://", "https://")):
             return f"ERROR: blocked redirect to a non-public address -- {blocked[0]}"
-        if page.egress.blocked and response is not None and response.headers.get(REFUSED_HEADER):
-            return f"ERROR: blocked: {url!r} reached a non-public address -- {page.egress.blocked[0]}"
+        if egress.blocked and response is not None and response.headers.get(REFUSED_HEADER):
+            return f"ERROR: blocked: {url!r} reached a non-public address -- {egress.blocked[0]}"
 
         title = await page.title()
         try:
@@ -258,19 +265,21 @@ _LINKS_MAX = 40
 _LINKS_CHARS = 2_500
 
 
-async def _page_links(page) -> list[str]:
+async def _page_links(page: "Page") -> list[str]:
     """Up to _LINKS_MAX distinct http(s) links on the page, same site first,
     as "text -> url". Never raises: a page that will not give its links still
     gives its text."""
     try:
-        raw = await page.eval_on_selector_all(
+        raw: Any = await page.eval_on_selector_all(
             "a[href]", "els => els.map(e => [(e.innerText || e.getAttribute('aria-label') || '').trim(), e.href])")
     except Exception:  # noqa: BLE001
         return []
     here = (urlparse(page.url).hostname or "").lower()
     seen: set[str] = set()
-    same, other = [], []
-    for label, href in raw or []:
+    same: list[str] = []
+    other: list[str] = []
+    pairs: list[Any] = raw or []
+    for label, href in pairs:
         if not isinstance(href, str) or not href.startswith(("http://", "https://")):
             continue
         href = href.split("#", 1)[0]
@@ -279,7 +288,8 @@ async def _page_links(page) -> list[str]:
         seen.add(href)
         line = f"- {' '.join(str(label).split())[:80] or '(link)'} -> {href}"
         (same if (urlparse(href).hostname or "").lower() == here else other).append(line)
-    out, size = [], 0
+    out: list[str] = []
+    size = 0
     for line in same + other:
         if len(out) >= _LINKS_MAX or size + len(line) > _LINKS_CHARS:
             break
@@ -431,12 +441,12 @@ def run_find(repo_root: str, glob: str, path: str = ".") -> str:
 def make_planning_tools(
     existing_plan: str | None = None,
     allowed_repos: list[str] | None = None,
-    existing_brief: dict | None = None,
+    existing_brief: dict[str, Any] | None = None,
     skills_manifest: dict[str, str] | None = None,
     is_admin: bool = False,
     actor: str | None = None,
     session_id: str | None = None,
-) -> tuple[list, dict]:
+) -> tuple[list[BaseTool], dict[str, Any]]:
     """Returns ([web_search, browse_page, preview_app, list_project_dir,
     read_project_file, search_project, find_files, save_brief, save_plan,
     create_project], plan_ref).
@@ -478,8 +488,8 @@ def make_planning_tools(
     # Repo search: identical-call counter and last result (the repeat guard),
     # plus the per-turn budget. See search_project below and this module's
     # run_search/run_find for why each exists.
-    search_seen: dict[tuple, int] = {}
-    search_last: dict[tuple, str] = {}
+    search_seen: dict[tuple[str | bool, ...], int] = {}
+    search_last: dict[tuple[str | bool, ...], str] = {}
     search_calls = {"n": 0}
     # The draft gate: reads since the last save_plan. Past the budget the read
     # tool closes until a plan is saved -- reading is never the deliverable,
@@ -491,7 +501,7 @@ def make_planning_tools(
     # rebuilt from scratch on EVERY turn, so a plan_ref that always started at
     # None meant the session's own draft was invisible to the turn that came
     # after it -- and, worse, got clobbered (see run_planning_turn's caller).
-    plan_ref: dict = {"markdown": existing_plan, "brief": existing_brief}
+    plan_ref: dict[str, Any] = {"markdown": existing_plan, "brief": existing_brief}
     skills_manifest = skills_manifest or {}
     # One per turn: this toolset is rebuilt for every planning turn.
     from agent.tools.browse_guard import BrowseGuard  # noqa: PLC0415
@@ -709,7 +719,7 @@ def make_planning_tools(
             )
         return "Plan saved. The user can now see it and use \"Build Now\" whenever they're ready."
 
-    def _search_gate(key: tuple) -> str | None:
+    def _search_gate(key: tuple[str | bool, ...]) -> str | None:
         """The two things that made the old grep loop: a budget so a turn
         cannot search instead of writing, and a repeat guard so an unchanged
         query cannot be re-run in the hope of a different answer."""
@@ -801,7 +811,7 @@ def make_planning_tools(
         conversation, so write it as the yardstick every later read and every
         paragraph of the plan is measured against. Call it again whenever the
         operator's request changes."""
-        brief = {
+        brief: dict[str, Any] = {
             "goal": goal.strip(),
             "deliverable": deliverable.strip(),
             "out_of_scope": out_of_scope.strip(),

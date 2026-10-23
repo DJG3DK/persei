@@ -4,6 +4,8 @@ import re
 import shlex
 import asyncio
 import logging
+from pathlib import Path
+from typing import Any
 
 from agent.tools.shell import run_shell
 
@@ -69,7 +71,7 @@ def _trusted_git_dir_error(repo_root: str) -> str | None:
     return None
 
 
-async def _git(cmd: str, repo_root: str, timeout: int = 30, extra_env: dict | None = None) -> dict:
+async def _git(cmd: str, repo_root: str, timeout: int = 30, extra_env: dict[str, str] | None = None) -> dict[str, Any]:
     """Run one git command with hooks disabled and the pointer verified."""
     problem = _trusted_git_dir_error(repo_root)
     if problem is not None:
@@ -137,8 +139,7 @@ async def git_diff(repo_root: str, staged: bool = False) -> str:
 _OWNER_MARKER = "tektonix-workspace-owner"
 
 
-async def _owner_marker_path(repo_root: str):
-    from pathlib import Path  # noqa: PLC0415
+async def _owner_marker_path(repo_root: str) -> Path | None:
     r = await _git("rev-parse --absolute-git-dir", repo_root, timeout=15)
     if not r["ok"]:
         return None
@@ -172,7 +173,7 @@ async def _claim_workspace(repo_root: str, task_id: str) -> None:
 
 
 async def sync_workspace_to_base(repo_root: str, base_ref: str = "main",
-                                 task_id: str | None = None) -> dict:
+                                 task_id: str | None = None) -> dict[str, Any]:
     """Move an IDLE workspace to the current live tip before a fresh task edits.
 
     Why this exists: the workspace worktree only ever sat where the previous
@@ -263,7 +264,7 @@ def task_branch_name(task_id: str) -> str:
     return f"agent/{safe}"
 
 
-async def ensure_task_branch(repo_root: str, task_id: str, base_ref: str = "main") -> dict:
+async def ensure_task_branch(repo_root: str, task_id: str, base_ref: str = "main") -> dict[str, Any]:
     """Put the agent's workspace on a per-task branch before committing.
 
     The workspace is a git worktree of the live repo, so this branch is created
@@ -354,7 +355,7 @@ def _is_denied_artifact(repo_root: str, pth: str) -> bool:
 
 
 def _porcelain_paths(porcelain: str) -> list[str]:
-    paths = []
+    paths: list[str] = []
     for line in porcelain.splitlines():
         if len(line) < 4:
             continue
@@ -366,7 +367,7 @@ def _porcelain_paths(porcelain: str) -> list[str]:
     return paths
 
 
-async def git_commit(repo_root: str, message: str, files: list[str] | None = None) -> dict:
+async def git_commit(repo_root: str, message: str, files: list[str] | None = None) -> dict[str, Any]:
     if not files:
         # audit M-12: guard the blanket `git add -A`. Inspect what would be
         # staged and refuse obvious artifacts / a runaway file count, so the
@@ -467,7 +468,7 @@ async def sha_in_repo(repo_root: str, sha: str) -> bool:
     return (await proc.wait()) == 0
 
 
-async def rebase_onto_base(repo_root: str, base_ref: str = "main") -> dict:
+async def rebase_onto_base(repo_root: str, base_ref: str = "main") -> dict[str, Any]:
     """Move the task branch onto the live tip when the tip has moved under it.
 
     The merge into live is `--ff-only`, deliberately: it is what guarantees the
@@ -545,7 +546,7 @@ async def rebase_onto_base(repo_root: str, base_ref: str = "main") -> dict:
     }
 
 
-async def reclaim_own_stash(repo_root: str, task_id: str) -> dict:
+async def reclaim_own_stash(repo_root: str, task_id: str) -> dict[str, Any]:
     """Put back a task's own uncommitted work that another task stashed.
 
     The workspace is shared and the project lock is held only while a task
@@ -586,7 +587,7 @@ async def reclaim_own_stash(repo_root: str, task_id: str) -> dict:
     base_sha = base["output"].strip()
 
     status = await _git("status --porcelain", repo_root, timeout=15)
-    out: dict = {"ok": True, "stash": ref, "base": base_sha[:12]}
+    out: dict[str, Any] = {"ok": True, "stash": ref, "base": base_sha[:12]}
     if status["output"].strip():
         owner = await _workspace_owner(repo_root)
         whose = owner or "an unknown task"
@@ -620,7 +621,7 @@ async def reclaim_own_stash(repo_root: str, task_id: str) -> dict:
 
 
 async def restore_task_workspace(repo_root: str, task_id: str, base_ref: str = "main",
-                                 rebase: bool = True) -> dict:
+                                 rebase: bool = True) -> dict[str, Any]:
     """Put a RESUMED task back on its own branch, on the current base, before it edits.
 
     sync_workspace_to_base runs only on a task's first pass. A task resumed
@@ -655,7 +656,7 @@ async def restore_task_workspace(repo_root: str, task_id: str, base_ref: str = "
     if not status["ok"]:
         return {"ok": False, "reason": f"status failed: {status['output'][:200]}"}
 
-    out: dict = {"ok": True, "branch": branch}
+    out: dict[str, Any] = {"ok": True, "branch": branch}
     if status["output"].strip():
         owner = await _workspace_owner(repo_root)
         if owner == task_id and (on_branch or not exists):
@@ -705,7 +706,7 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
 
-async def fetch_base_from_origin(live_root: str, base_ref: str = "main") -> dict:
+async def fetch_base_from_origin(live_root: str, base_ref: str = "main") -> dict[str, Any]:
     """Bring the live checkout's base branch up to date with `origin`.
 
     The local copy is a cache of GitHub, not the source of truth. Without this

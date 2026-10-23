@@ -11,6 +11,7 @@ import os
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 DEFAULT_DESCRIBE_PROMPT = (
     "Describe this image thoroughly for a developer who cannot see it: layout, all visible text "
@@ -34,7 +35,7 @@ async def describe_image_bytes(image_bytes: bytes, mime: str, prompt: str | None
     model = ChatOpenAI(
         model="agent-vision",
         base_url=os.environ.get("MODEL_ROUTER_URL", "http://127.0.0.1:4001/v1"),
-        api_key=os.environ.get("MODEL_ROUTER_KEY", os.environ.get("OPENAI_API_KEY", "")),
+        api_key=SecretStr(os.environ.get("MODEL_ROUTER_KEY", os.environ.get("OPENAI_API_KEY", ""))),
         timeout=120,
     )
     response = await model.ainvoke([

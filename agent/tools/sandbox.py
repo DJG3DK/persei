@@ -30,6 +30,7 @@ import re
 import socket
 import contextlib
 import uuid
+from typing import Any, TypedDict, cast
 
 from agent.tools.shell import GIT_IDENTITY_VARS, ShellTimeout
 
@@ -188,7 +189,7 @@ def _mount_allow_roots(cwd: str) -> list[str]:
     return roots
 
 
-def _project_of(cwd: str):
+def _project_of(cwd: str) -> tuple[str, dict[str, Any]] | None:
     """(name, config) of the project whose workspace -- its own, or one of
     its tasks' -- `cwd` is. Decided from server-owned config only."""
     try:
@@ -198,7 +199,7 @@ def _project_of(cwd: str):
         return None
 
 
-def _stack_images() -> dict:
+def _stack_images() -> dict[str, Any]:
     """docker/stack-images.json -- the one map of toolchain -> image the
     reviewer and onboarding already read. Missing means default only."""
     import json
@@ -209,7 +210,7 @@ def _stack_images() -> dict:
         return {}
 
 
-def sandbox_environment_for(cwd: str) -> tuple[str, dict]:
+def sandbox_environment_for(cwd: str) -> tuple[str, dict[str, Any]]:
     """The image a command in this workspace runs in, and the env its
     toolchain needs.
 
@@ -220,10 +221,12 @@ def sandbox_environment_for(cwd: str) -> tuple[str, dict]:
     whole other language -- gets an environment of its own, and nothing else
     changes: same mounts, same limits, same hardening."""
     found = _project_of(cwd)
-    cfg = found[1] if found else {}
-    stack = (_stack_images().get("stacks") or {}).get(cfg.get("stack") or "") or {}
+    cfg: dict[str, Any] = found[1] if found else {}
+    stacks: dict[str, Any] = _stack_images().get("stacks") or {}
+    stack: dict[str, Any] = stacks.get(cfg.get("stack") or "") or {}
     image = cfg.get("sandbox_image") or stack.get("image") or SANDBOX_IMAGE
-    return str(image), dict(stack.get("env") or {})
+    env: dict[str, Any] = stack.get("env") or {}
+    return str(image), dict(env)
 
 
 def sandbox_image_for(cwd: str) -> str:
@@ -233,7 +236,14 @@ def sandbox_image_for(cwd: str) -> str:
 _MOUNT_POINT = __import__("re").compile(r"^/[A-Za-z0-9._/-]{1,200}$")
 
 
-def sandbox_layout_for(cwd: str) -> dict:
+class SandboxLayout(TypedDict):
+    mounts: list[str]
+    init: str
+    network: str | None
+    readonly: list[tuple[str, str]]
+
+
+def sandbox_layout_for(cwd: str) -> SandboxLayout:
     """Project options for WHERE and HOW a command runs, from projects.json.
 
     For a project whose image expects its code somewhere in particular --
@@ -254,16 +264,18 @@ def sandbox_layout_for(cwd: str) -> dict:
     Server-owned config, never the workspace's: a mount point is validated as
     an absolute path and may not shadow the container's own system paths."""
     found = _project_of(cwd)
-    cfg = found[1] if found else {}
+    cfg: dict[str, Any] = found[1] if found else {}
     forbidden = ("/", "/bin", "/sbin", "/usr", "/lib", "/lib64", "/etc", "/proc", "/sys", "/dev",
                  "/root", "/opt", "/workspace", "/tmp", "/var")
-    mounts = [m for m in (cfg.get("sandbox_mounts") or [])
+    declared_mounts: list[Any] = cfg.get("sandbox_mounts") or []
+    mounts: list[str] = [m for m in declared_mounts
               if isinstance(m, str) and _MOUNT_POINT.match(m) and ".." not in m
               and m.rstrip("/") not in forbidden]
     init = cfg.get("sandbox_shell_init") or ""
     network = cfg.get("sandbox_network") or None
-    ro = cfg.get("sandbox_readonly_mounts") or {}
-    readonly = [(str(src), tgt) for tgt, src in (ro.items() if isinstance(ro, dict) else [])
+    declared_ro: Any = cfg.get("sandbox_readonly_mounts") or {}
+    ro = cast("dict[Any, Any]", declared_ro) if isinstance(declared_ro, dict) else {}
+    readonly: list[tuple[str, str]] = [(str(src), tgt) for tgt, src in ro.items()
                 if isinstance(tgt, str) and _MOUNT_POINT.match(tgt) and ".." not in tgt
                 and tgt.rstrip("/") not in forbidden and tgt not in mounts
                 and isinstance(src, str) and os.path.isabs(src) and ".." not in src and os.path.isdir(src)]
@@ -404,9 +416,9 @@ async def run_shell_sandboxed(
     # None means "use the operator-set default"; an explicit value from the
     # call site still wins, so the long-running checks keep their own caps.
     timeout: int | None = None,
-    extra_env: dict | None = None,
+    extra_env: dict[str, Any] | None = None,
     network: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Runs `cmd` inside an ephemeral Docker container with only `cwd`
     (the repo sandbox checkout) bind-mounted, read-write, at /workspace --
     no other host path is visible inside the container. No TTY, CI=true,
@@ -429,7 +441,7 @@ async def run_shell_sandboxed(
         network = layout["network"]          # the project's rule wins over the call site's
     if layout["init"]:
         cmd = f"{layout['init']}\n{cmd}"
-    env_args = []
+    env_args: list[str] = []
     for k, v in {"CI": "true", "DEBIAN_FRONTEND": "noninteractive", **toolchain_env,
                  **(extra_env or {})}.items():
         env_args += ["-e", f"{k}={v}"]
@@ -512,8 +524,8 @@ async def run_shell_sandboxed(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
+    _timeout = timeout if timeout is not None else _rs.as_int("sandbox_command_timeout_s")
     try:
-        _timeout = timeout if timeout is not None else _rs.as_int("sandbox_command_timeout_s")
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_timeout)
     except TimeoutError:
         await _kill_container(container_name)
@@ -537,8 +549,8 @@ async def run_shell_sandboxed(
 
 # --- previewing a running app ----------------------------------------------
 
-async def start_preview_container(cmd: str, cwd: str, container_port: int,
-                                  env: dict | None = None) -> dict:
+async def start_preview_container(cmd: str, cwd: str, container_port: object,
+                                  env: dict[str, Any] | None = None) -> dict[str, Any]:
     """Start `cmd` detached in a sandbox container with one port published.
 
     The same image, mounts and hardening every other sandboxed command gets.
@@ -610,7 +622,7 @@ async def start_preview_container(cmd: str, cwd: str, container_port: int,
             "url": f"http://127.0.0.1:{host_port}"}
 
 
-async def wait_for_preview(host_port: int, container: str, timeout: int = 120) -> dict:
+async def wait_for_preview(host_port: int, container: str, timeout: int = 120) -> dict[str, Any]:
     """Wait until something answers on the port, or the container dies.
 
     Watching the container matters as much as watching the port: a dev server
@@ -620,7 +632,7 @@ async def wait_for_preview(host_port: int, container: str, timeout: int = 120) -
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         try:
-            reader, writer = await asyncio.wait_for(
+            _reader, writer = await asyncio.wait_for(
                 asyncio.open_connection("127.0.0.1", host_port), timeout=2)
             writer.close()
             with contextlib.suppress(Exception):

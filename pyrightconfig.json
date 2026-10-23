@@ -1,0 +1,70 @@
+// Type checking, enforced in CI. The version is the one requirements.txt pins.
+//
+// pyright over mypy: it infers through unannotated locals and the langchain /
+// psycopg / httpx types the code leans on without needing stub packages, and a
+// full run takes seconds.
+//
+// Two tiers. "strict" lists the code where a shape mix-up has already shipped
+// a bug -- a tuple read as a dict, an empty dict where None was meant -- and
+// is held to full strict mode. Everything else under agent/ is checked in
+// basic mode, except the files under "ignore", which have not had their
+// cleanup pass yet. To widen: fix a file and delete it from "ignore", or move
+// a clean basic file up into "strict".
+{
+  "include": ["agent"],
+  "exclude": ["**/__pycache__", "**/.venv"],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+
+  "strict": [
+    "agent/nodes",
+    "agent/tools",
+    "agent/github_inbox.py",
+    "agent/github_settings.py",
+    "agent/inbox_alerts.py"
+  ],
+
+  // A module-private helper shared with a sibling module (tools/git.py's _git,
+  // files.py's _resolve) is this codebase's convention for "not public API".
+  // Strict mode flags those imports, and a config-level override cannot reach
+  // a strict file, so each importing file says so where it imports one:
+  //   # pyright: reportPrivateUsage=false
+
+  // Files with basic-mode errors not yet worked through. Most are friction
+  // with library types rather than bugs: psycopg rows typed as tuples where
+  // the pool's row factory makes them dicts, langchain middleware lists and
+  // config dicts its TypedDicts do not accept. Shrink this list, never grow
+  // it: a new file belongs in a checked tier from its first commit.
+  "ignore": [
+    "agent/auth.py",
+    "agent/classify.py",
+    "agent/consolidation.py",
+    "agent/deep_agent.py",
+    "agent/episode_vectors.py",
+    "agent/evals/runner.py",
+    "agent/file_lock.py",
+    "agent/graph.py",
+    "agent/lifecycle.py",
+    "agent/middleware/empty_reply.py",
+    "agent/middleware/repeat_guard.py",
+    "agent/middleware/sanitize_tool_calls.py",
+    "agent/model_client.py",
+    "agent/observability.py",
+    "agent/outer_graph.py",
+    "agent/outer_state.py",
+    "agent/passkeys.py",
+    "agent/plan_progress.py",
+    "agent/planning_chat.py",
+    "agent/provisioning.py",
+    "agent/push.py",
+    "agent/rate_limit.py",
+    "agent/review_sandbox.py",
+    "agent/routers/auth.py",
+    "agent/routers/github.py",
+    "agent/routers/passkeys.py",
+    "agent/routers/swebench.py",
+    "agent/server.py",
+    "agent/store_paging.py",
+    "agent/supervisor.py"
+  ]
+}

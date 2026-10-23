@@ -48,12 +48,17 @@ import re
 from contextlib import asynccontextmanager
 import logging
 import time
+from collections.abc import Mapping
+from typing import Any, cast
 
 from langgraph.store.base import BaseStore
 
 from agent.config import Config, PROJECTS
 from agent.episodes import write_episode
 from agent.tools.checks import run_all_checks
+# _git and _claim_workspace are tools/git.py's internals, shared with this node
+# on purpose rather than published to the agent's tool surface.
+# pyright: reportPrivateUsage=false
 from agent.tools.git import (
     _git,
     commits_ahead,
@@ -156,14 +161,17 @@ def _last_work_response_text(state: AgentState) -> str | None:
     with the coordinator's last streamed text, so this is what the model
     said to end its turn.
     """
-    for entry in reversed(state.get("execution_log", [])):
+    # Read as checkpointed data rather than as LogEntry: an entry written by
+    # an older version need not carry a string detail.
+    log: list[Mapping[str, object]] = list(state.get("execution_log", []))
+    for entry in reversed(log):
         if entry.get("node") == "work":
             detail = entry.get("detail")
             return detail if isinstance(detail, str) else None
     return None
 
 
-def _escalate(reason: str) -> dict:
+def _escalate(reason: str) -> dict[str, Any]:
     return {
         "escalated": True,
         "escalation_reason": reason,
@@ -178,7 +186,7 @@ def _escalate(reason: str) -> dict:
     }
 
 
-async def _apply_operator_edits(state: AgentState, repo_root: str, edits: dict) -> dict:
+async def _apply_operator_edits(state: AgentState, repo_root: str, edits: dict[str, Any]) -> dict[str, Any]:
     """Write the operator's edited files onto the task branch's checkout.
 
     Refuses rather than guesses: the branch must still be at the sha the
@@ -214,7 +222,8 @@ async def _apply_operator_edits(state: AgentState, repo_root: str, edits: dict) 
     await _claim_workspace(repo_root, state["task_id"])
 
     root = os.path.realpath(repo_root)
-    for f in edits.get("files") or []:
+    files: list[dict[str, Any]] = edits.get("files") or []
+    for f in files:
         rel = valid_edit_path(f.get("path", ""))
         if rel is None:
             return {"ok": False, "reason": f"refused path {f.get('path')!r}"}
@@ -243,16 +252,13 @@ def _unfinished_todos(state: AgentState) -> list[str]:
     "completed" counts as outstanding; a task with no todo list at all
     returns [] and is unaffected.
     """
-    todos = state.get("latest_todos") or []
-    return [
-        str(t.get("content", ""))
-        for t in todos
-        if isinstance(t, dict) and t.get("status") != "completed"
-    ]
+    todos: list[Any] = state.get("latest_todos") or []
+    items = [cast(dict[str, Any], t) for t in todos if isinstance(t, dict)]
+    return [str(t.get("content", "")) for t in items if t.get("status") != "completed"]
 
 
 def _loop_back(reason: str, feedback: str, state: AgentState, no_diff_streak: int = 0,
-               evidence: str = "") -> dict:
+               evidence: str = "") -> dict[str, Any]:
     """`evidence` is for the operator's log only, never for the model: it
     names workspace paths, which the model is told nothing about."""
     return {
@@ -283,7 +289,7 @@ def _stream_phase(summary: str, phase: str) -> None:
         pass
 
 
-def _ci_log_entry(ci: dict, sha: str) -> dict:
+def _ci_log_entry(ci: dict[str, Any], sha: str) -> dict[str, Any]:
     if ci.get("skipped"):
         summary = f"GitHub Actions gate skipped: {ci['skipped']}"
     elif ci["ok"]:
@@ -299,23 +305,24 @@ def _ci_log_entry(ci: dict, sha: str) -> dict:
             "cost_usd": 0.0, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
-def _merged_summary(deployed: dict) -> str:
+def _merged_summary(deployed: dict[str, Any]) -> str:
     """What a successful merge did with GitHub, said on the line the operator
     reads. The push is best-effort after the merge, and a failure used to live
     only in the entry's detail: the task read "merged and deployed" with origin
     still behind."""
-    push = deployed.get("origin_push") or (deployed.get("merge") or {}).get("push")
+    merge: dict[str, Any] = deployed.get("merge") or {}
+    push: dict[str, Any] | None = deployed.get("origin_push") or merge.get("push")
     if not push or push.get("skipped"):
         return "merged and deployed"
     if not push.get("ok"):
         why = str(push.get("reason") or push.get("error") or "unknown").strip()[:200]
         return f"merged locally, but GitHub was NOT updated: {why}"
-    restart = deployed.get("restart") or {}
+    restart: dict[str, Any] = deployed.get("restart") or {}
     deployed_something = restart.get("built") or restart.get("restarted")
     return "merged, deployed and pushed to GitHub" if deployed_something else "merged and pushed to GitHub"
 
 
-def _done_no_changes(state: AgentState, evidence: str = "") -> dict:
+def _done_no_changes(state: AgentState, evidence: str = "") -> dict[str, Any]:
     """Terminal, non-escalated completion for a task that genuinely needed
     no code changes -- distinct from `_escalate` (nothing went wrong) and
     from a real ship (nothing was committed/reviewed/deployed). Routes to
@@ -335,7 +342,7 @@ def _done_no_changes(state: AgentState, evidence: str = "") -> dict:
     }
 
 
-async def _write_episode(store: BaseStore, state: AgentState, result: dict,
+async def _write_episode(store: BaseStore, state: AgentState, result: dict[str, Any],
                          config: Config) -> None:
     """Work out how this task ended, and hand the record to the one writer.
 
@@ -355,12 +362,13 @@ async def _write_episode(store: BaseStore, state: AgentState, result: dict,
         outcome = "done_no_changes"
     else:
         outcome = "shipped"
-    record = {
+    review: dict[str, Any] = result.get("review_gate_result") or {}
+    record: dict[str, Any] = {
         "task_id": state["task_id"],
         "goal": state["goal"],
         "outcome": outcome,
         "escalation_reason": result.get("escalation_reason"),
-        "review_verdict": (result.get("review_gate_result") or {}).get("verdict"),
+        "review_verdict": review.get("verdict"),
         "cost_usd": state["cost_so_far"],
         "iteration_count": state["iteration_count"],
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -372,7 +380,7 @@ async def _write_episode(store: BaseStore, state: AgentState, result: dict,
     await write_episode(store, config, state["repo"], record)
 
 
-async def _add_reflection(state: AgentState, result: dict, kind: str, config: Config) -> None:
+async def _add_reflection(state: AgentState, result: dict[str, Any], kind: str, config: Config) -> None:
     """agent/reflection.py: a failed attempt's three-line reflection leads the
     next attempt's feedback, and is kept on the task and in its episode."""
     from agent import reflection, workspaces
@@ -405,7 +413,7 @@ async def _add_reflection(state: AgentState, result: dict, kind: str, config: Co
     }]
 
 
-def _is_terminal(result: dict) -> bool:
+def _is_terminal(result: dict[str, Any]) -> bool:
     if result.get("escalated"):
         # First, so that an escalation is never buried behind a parking flag
         # left in the same result. A task that gave up has a real outcome to
@@ -441,7 +449,7 @@ def _is_terminal(result: dict) -> bool:
     return not result.get("pending_feedback")
 
 
-async def verify_and_ship_node(state: AgentState, app_config: Config, pg_store: BaseStore) -> dict:
+async def verify_and_ship_node(state: AgentState, app_config: Config, pg_store: BaseStore) -> dict[str, Any]:
     # app_config/pg_store (not config/store) -- see outer_graph.py's own
     # comment on why those literal names collide with LangGraph's node-kwarg
     # auto-injection.
@@ -456,7 +464,7 @@ async def verify_and_ship_node(state: AgentState, app_config: Config, pg_store: 
     return result
 
 
-async def _verify_and_ship(state: AgentState, config: Config, store: BaseStore | None = None) -> dict:
+async def _verify_and_ship(state: AgentState, config: Config, store: BaseStore | None = None) -> dict[str, Any]:
     if state.get("escalated"):
         # work_node already escalated this pass -- the graph's own
         # work->verify_and_ship edge is unconditional, so without this guard
@@ -520,7 +528,7 @@ def _concluded_before(state: AgentState) -> bool:
     return False
 
 
-async def _already_fixed(state: AgentState, config: Config | None) -> dict | None:
+async def _already_fixed(state: AgentState, config: Config) -> dict[str, Any] | None:
     from agent import inbox_alerts
     if _concluded_before(state):
         return None
@@ -566,8 +574,14 @@ async def _ship_gate(repo: str, config: Config | None):
         yield
 
 
+class _GateState(AgentState, total=False):
+    """The task's state as the gate's own passes see it: `_operator_edit` is the
+    hand edit this pass applied, never written back to the task."""
+    _operator_edit: dict[str, Any] | None
+
+
 async def _verify_and_ship_gated(state: AgentState, config: Config | None, store: BaseStore | None,
-                                 repo: str) -> dict:
+                                 repo: str) -> dict[str, Any]:
     # The task's own workspace, made if it is missing: a task can reach this
     # node straight from a resume, with no work pass before it, and its
     # workspace may have been cleaned up since -- or never exist, for a task
@@ -593,27 +607,28 @@ async def _verify_and_ship_gated(state: AgentState, config: Config | None, store
         if not restored.get("ok"):
             return _escalate(f"could not put the workspace on this task's branch: {restored.get('reason')}")
 
-    if state.get("operator_edits"):
+    edits = state.get("operator_edits")
+    if edits:
         # Applied here and nowhere else: this node runs inside the task's own
         # graph run, which holds the project lock. From here it is ordinary
         # uncommitted work -- committed, checked and reviewed like the
         # agent's, and parked again for the operator's final look.
-        edits = state["operator_edits"]
         try:
             applied = await _apply_operator_edits(state, repo_root, edits)
         except Exception as e:  # noqa: BLE001
             applied = {"ok": False, "reason": str(e)}
         if not applied["ok"]:
             return {**_escalate(f"operator edit not applied: {applied['reason']}"), "operator_edits": None}
-        state = {**state, "operator_edits": None, "_operator_edit": edits}
+        gate_state = _GateState(**state, _operator_edit=edits)
+        gate_state["operator_edits"] = None
         try:
-            out = await _verify_and_ship_inner(state, repo, repo_root, store)
+            out = await _verify_and_ship_inner(gate_state, repo, repo_root, store)
         except Exception as e:  # noqa: BLE001 -- same conversion as below
             out = _escalate(f"verify_and_ship failed: {e}")
         return {**out, "operator_edits": None}
 
     try:
-        return await _verify_and_ship_inner(state, repo, repo_root, store)
+        return await _verify_and_ship_inner(_GateState(**state), repo, repo_root, store)
     except Exception as e:  # noqa: BLE001 -- converts any transient failure
         # (a review-service network blip, a subprocess spawn hiccup in
         # run_all_checks) into a normal, resumable escalation instead of an
@@ -634,8 +649,8 @@ async def _verify_and_ship_gated(state: AgentState, config: Config | None, store
         return esc
 
 
-async def _verify_and_ship_inner(state: AgentState, repo: str, repo_root: str,
-                                 store: BaseStore | None = None) -> dict:
+async def _verify_and_ship_inner(state: "_GateState", repo: str, repo_root: str,
+                                 store: BaseStore | None = None) -> dict[str, Any]:
     # ── Fast path: the operator just approved the outstanding commit ────────
     # On the post-approval re-entry, nothing about the code has changed since
     # this gate last ran: checks already passed for this exact sha, the review
@@ -752,7 +767,7 @@ async def _verify_and_ship_inner(state: AgentState, repo: str, repo_root: str,
             # sha, the work is shipped, so conclude instead of re-reviewing.
             live_root = (PROJECTS.get(repo) or {}).get("live")
             if live_root and await sha_in_repo(live_root, pending_sha):
-                shipped_log = [{
+                shipped_log: list[dict[str, Any]] = [{
                     "node": "verify_and_ship",
                     "step_id": state["task_id"],
                     "summary": "already merged and deployed (auto-merge on READY) -- concluding",
@@ -1061,7 +1076,7 @@ async def _verify_and_ship_inner(state: AgentState, repo: str, repo_root: str,
     return {**await _review_and_deploy(state, repo, sha), "incomplete_plan_streak": 0}
 
 
-async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
+async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict[str, Any]:
     """Triggers (or re-triggers, on a resume) a review-service pass for
     `sha` and acts on the verdict. `committed_sha` is set to `sha` on every
     non-terminal-success return path here (loop-back, escalation) so a
@@ -1114,7 +1129,7 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
     except TimeoutError as e:
         return {"committed_sha": sha, **_escalate(str(e))}
 
-    log_entry = {
+    log_entry: dict[str, Any] = {
         "node": "verify_and_ship",
         "step_id": None,
         "summary": f"review service verdict: {review['verdict']}",
@@ -1274,7 +1289,7 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
             esc = _escalate(f"not merged -- GitHub Actions gate: {ci.get('error') or ci.get('reason')}")
             return {**esc, "committed_sha": sha, "review_gate_result": review,
                     "execution_log": [log_entry, ci_entry, *esc["execution_log"]]}
-        logged = [log_entry, ci_entry]
+        logged: list[dict[str, Any]] = [log_entry, ci_entry]
     else:
         logged = [log_entry]
 
@@ -1360,7 +1375,7 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
         same = " The patch is unchanged; this is the same work on a newer base." \
             if rb.get("patch_identical") else ""
         print(f"[verify] {repo}: live moved, rebased {sha[:12]} -> {new_sha[:12]}.{same}")
-        carried = []
+        carried: list[dict[str, Any]] = []
         if rb.get("patch_identical") and state.get("merge_approved_sha") == sha:
             # The operator approved this exact patch; a rebase that changed
             # nothing but the parent is the same work, and asking again for
@@ -1436,11 +1451,11 @@ async def _review_and_deploy(state: AgentState, repo: str, sha: str) -> dict:
     # no checks (its built-ins can carry checks projects.json cannot see);
     # never on a failed merge/deploy above. Never raises -- an exception here
     # would turn a shipped task into an escalation via the outer try/except.
-    shipped_log = [*logged, deploy_entry]
+    shipped_log: list[dict[str, Any]] = [*logged, deploy_entry]
     checks_entry = await autodetect_checks_if_none(repo)
     if checks_entry is not None:
         shipped_log.append(checks_entry)
-    out = {
+    out: dict[str, Any] = {
         "committed_sha": None,  # shipped -- nothing left to track
         "pending_merge_approval": None,
         "merge_approved_sha": None,  # consumed by this merge; a future commit needs its own approval

@@ -29,6 +29,7 @@ from __future__ import annotations
 from agent.harness_voice import HARNESS
 
 import re
+from typing import Any, Literal, overload
 
 # The agent's own filesystem: store-backed, and mounted nowhere in the sandbox.
 # Matched on a path boundary so a repo file that merely mentions one of these
@@ -107,7 +108,11 @@ def _is_read_pipeline(segment: str) -> list[str] | None:
     return files
 
 
-def split_top_level(text: str, seps: tuple[str, ...], keep_seps: bool = False):
+@overload
+def split_top_level(text: str, seps: tuple[str, ...], keep_seps: Literal[False] = False) -> list[str]: ...
+@overload
+def split_top_level(text: str, seps: tuple[str, ...], keep_seps: Literal[True]) -> list[tuple[str, str]]: ...
+def split_top_level(text: str, seps: tuple[str, ...], keep_seps: bool = False) -> list[str] | list[tuple[str, str]]:
     """Split on separators that are not inside quotes.
 
     A plain re.split cut `awk 'NR>=40 && NR<=90' file` in half, because the
@@ -119,7 +124,7 @@ def split_top_level(text: str, seps: tuple[str, ...], keep_seps: bool = False):
     back into a command the shell will still run -- the benchmark guard does
     that (agent/tools/benchmark_guard.py, 2026-09-25).
     """
-    out: list = []
+    out: list[Any] = []
     buf: list[str] = []
     quote = None
     i = 0

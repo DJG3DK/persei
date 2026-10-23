@@ -19,8 +19,9 @@ one loopback origin is allowed, the one this process just allocated.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from agent.tools.sandbox import (
     preview_logs,
@@ -28,6 +29,9 @@ from agent.tools.sandbox import (
     stop_preview_container,
     wait_for_preview,
 )
+
+# make_project_preview_tool reuses planning_tools' _project_root on purpose.
+# pyright: reportPrivateUsage=false
 
 logger = logging.getLogger("tektonix")
 
@@ -71,7 +75,7 @@ async def run_preview(cwd: str, command: str, port: int,
         await stop_preview_container(container)
 
 
-def make_preview_tool(cwd_for_repo):
+def make_preview_tool(cwd_for_repo: Callable[[], str]) -> BaseTool:
     """`preview_app`, bound to one project's workspace.
 
     `cwd_for_repo` is a callable so the tool cannot be pointed at another
@@ -104,7 +108,7 @@ def make_preview_tool(cwd_for_repo):
     return preview_app
 
 
-def make_project_preview_tool(allowed_repos):
+def make_project_preview_tool(allowed_repos: list[str] | None) -> BaseTool:
     """`preview_app` for a seat that may reach more than one project.
 
     Planning is deliberately cross-project (agent/tools/planning_tools.py), so
@@ -119,6 +123,8 @@ def make_project_preview_tool(allowed_repos):
     away. It writes nothing -- the workspace is the agent's own worktree, the
     container is thrown away, and the port is loopback.
     """
+    # The planner's own allow-list check, shared on purpose so the two cannot
+    # disagree (reportPrivateUsage is off for this file, at the top).
     from agent.tools.planning_tools import _project_root  # noqa: PLC0415
     from agent.tools.tool_errors import tool_errors_to_text  # noqa: PLC0415
 

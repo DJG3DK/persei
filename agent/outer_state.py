@@ -5,7 +5,7 @@ thread, keyed `f"{task_id}:work"`, not this outer state) is the plan; the
 outer graph doesn't keep its own parallel copy of it.
 """
 
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 import operator
 
@@ -43,7 +43,7 @@ class AgentState(TypedDict):
     # creation; a resume must keep it, like category.
     route: str
     route_reason: str | None
-    review_gate_result: dict | None
+    review_gate_result: dict[str, Any] | None
 
     # The sha of a commit that's been made but not yet confirmed shipped
     # (review READY + merged + deployed) or explicitly superseded.
@@ -87,7 +87,7 @@ class AgentState(TypedDict):
     # purely so `_route_after_verify`'s existing "pending_feedback set ->
     # route to work" check fires on resume, reusing that mechanism rather
     # than adding a parallel one.
-    pending_approval: dict | None
+    pending_approval: dict[str, Any] | None
 
     # The operator's decision(s) on a pending_approval request, submitted via
     # POST /api/tasks/{id}/approve and picked up by work_node on its next
@@ -97,7 +97,7 @@ class AgentState(TypedDict):
     # thread (resuming exactly where interrupt() paused it, not a fresh
     # message). Consumed and cleared by work_node the same pass it's read,
     # same discipline as pending_feedback.
-    approval_decision: list[dict] | None
+    approval_decision: list[dict[str, Any]] | None
 
     # The deep agent's own write_todos state, as of the end of the last
     # "work" pass -- persisted here (not just streamed live) so a client
@@ -107,7 +107,7 @@ class AgentState(TypedDict):
     # call. verify_and_ship's plan gate holds the commit while items are
     # unfinished (INCOMPLETE_PLAN_LIMIT passes at most), but "completed" here
     # carries no authority over what ships: the check suite runs regardless.
-    latest_todos: list | None
+    latest_todos: list[Any] | None
 
     # Append-only, via operator.add reducer -- a mutable "latest state"
     # field alone loses the ability to answer "did this actually happen"
@@ -196,7 +196,7 @@ class AgentState(TypedDict):
     # review_summary, findings, at}. A resting state exactly like
     # pending_approval -- _route_after_verify returns END on it, and the
     # operator moves it via POST /api/tasks/{id}/merge-decision.
-    pending_merge_approval: dict | None
+    pending_merge_approval: dict[str, Any] | None
 
     # The sha the operator explicitly approved for merge. verify_and_ship
     # merges only when this matches the outstanding committed_sha, so an
@@ -210,7 +210,7 @@ class AgentState(TypedDict):
     # run, under its project lock -- the workspace is shared, and a request
     # handler writing into it could land in the middle of another task.
     # verify_and_ship applies it, commits, and runs the full gate again.
-    operator_edits: dict | None
+    operator_edits: dict[str, Any] | None
 
     # Which OTHER projects this task may read, for "use the one in X as a
     # template". Resolved at creation from the creator's own access -- always

@@ -172,6 +172,17 @@ def test_approve_links_are_signed_expiring_and_bound_to_one_item():
     assert gi.approval_url(gs.normalize(None), tok) is None
 
 
+@pytest.mark.parametrize("missing", [None, ""])
+def test_no_secret_key_signs_nothing_and_accepts_nothing(missing):
+    # An empty key made an HMAC anyone can compute, so a link minted with it
+    # would pass; an absent one raised TypeError, which the page served as a 500.
+    cfg = SimpleNamespace(auth_secret_key=missing, github_token=None)
+    with pytest.raises(ValueError, match="^invalid$"):
+        gi.sign_approval(cfg, "proj", "pr:1", "n", "approve")
+    with pytest.raises(ValueError, match="^invalid$"):
+        gi.verify_approval(cfg, gi.sign_approval(_config(), "proj", "pr:1", "n", "approve"))
+
+
 def test_goal_and_notification_text_name_the_gate():
     item = _item("pr:12")
     item.title, item.url, item.number, item.summary = "bump lodash", "https://gh/pr/12", 12, "dependabot: dep/12 -> main"

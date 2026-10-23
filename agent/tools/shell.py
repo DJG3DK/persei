@@ -14,6 +14,7 @@ import os
 import signal
 import subprocess
 import sys
+from typing import Any
 
 # POSIX puts a child and everything it forks in one process group, which is
 # what makes a single killpg enough. Windows has no equivalent primitive, so
@@ -29,9 +30,11 @@ class ShellTimeout(Exception):
         self.timeout = timeout
 
 
-def _spawn_kwargs() -> dict:
+def _spawn_kwargs() -> dict[str, Any]:
     """Launch flags that make the child killable as a tree."""
-    if _WINDOWS:
+    # The same test as _WINDOWS, spelled out so the type checker knows the
+    # Windows-only constant below exists on this branch.
+    if sys.platform == "win32":
         # The Windows equivalent of a session leader: the child becomes its own
         # process-group root, which is what `taskkill /T` walks.
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
@@ -81,7 +84,7 @@ GIT_IDENTITY_VARS = ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME"
 # the compose bundle (2026-09-29, see the loop). Nothing else from the host
 # environment. Anything a specific caller genuinely needs is passed
 # explicitly via extra_env.
-def _safe_base_env() -> dict:
+def _safe_base_env() -> dict[str, str]:
     base = {
         "CI": "true",
         "DEBIAN_FRONTEND": "noninteractive",
@@ -103,9 +106,9 @@ def _safe_base_env() -> dict:
 
 
 async def run_shell(
-    cmd: str, cwd: str, timeout: int = 120, extra_env: dict | None = None,
+    cmd: str, cwd: str, timeout: int = 120, extra_env: dict[str, str] | None = None,
     inherit_env: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     """Runs `cmd` via a shell, no TTY, CI=true, hard timeout.
 
     Env is a MINIMAL allow-list by default (see _safe_base_env), NOT the host

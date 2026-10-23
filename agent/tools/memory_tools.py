@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 
-from langchain_core.tools import tool
+from langchain_core.tools import BaseTool, tool
 from langgraph.store.base import BaseStore
 
 from deepagents.backends import StoreBackend
@@ -41,7 +41,7 @@ ALL = "all"
 
 
 def make_memory_tools(repo: str, store: BaseStore | None, entries: list[memory_sections.IndexEntry],
-                      *, task_id: str | None = None) -> list:
+                      *, task_id: str | None = None) -> list[BaseTool]:
     """The memory-section toolset for one seat.
 
     Returns [] when there is nothing to fetch -- no store, or a project whose

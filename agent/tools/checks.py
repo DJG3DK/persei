@@ -11,13 +11,16 @@ that gate.
 """
 
 import pathlib
+from typing import Any, cast
+
 from agent import runtime_settings as _rs
 
 from agent.config import PROJECT_TEST_ENV
 from agent.tools.sandbox import run_shell_sandboxed
 
 
-async def run_check(repo_root: str, script: str, timeout: int, extra_env: dict | None = None) -> dict:
+async def run_check(repo_root: str, script: str, timeout: int,
+                    extra_env: dict[str, Any] | None = None) -> dict[str, Any]:
     # audit H-17: read package.json directly and DISTINGUISH "file absent /
     # unreadable" from "file present, no such script". The old `cat ... || true`
     # succeeded with empty output when package.json was missing or the worktree
@@ -100,15 +103,15 @@ def _annotate_offline_failure(output: str) -> str:
     return output
 
 
-async def run_typecheck(repo_root: str) -> dict:
+async def run_typecheck(repo_root: str) -> dict[str, Any]:
     return await run_check(repo_root, "typecheck", timeout=_rs.as_int("check_typecheck_timeout_s"))
 
 
-async def run_lint(repo_root: str) -> dict:
+async def run_lint(repo_root: str) -> dict[str, Any]:
     return await run_check(repo_root, "lint", timeout=_rs.as_int("check_lint_timeout_s"))
 
 
-async def run_test(repo_root: str, repo_name: str) -> dict:
+async def run_test(repo_root: str, repo_name: str) -> dict[str, Any]:
     # See PROJECT_TEST_ENV's own comment -- some projects' test suites need a
     # path to something outside their own workspace checkout (e.g. a live
     # config file they deliberately target against a single real instance).
@@ -127,7 +130,7 @@ async def run_test(repo_root: str, repo_name: str) -> dict:
     return await run_check(repo_root, "test", timeout=_rs.as_int("check_test_timeout_s"), extra_env=env)
 
 
-async def run_frontend_build(repo_root: str) -> dict:
+async def run_frontend_build(repo_root: str) -> dict[str, Any]:
     """Real production build of the repo's frontend, when it has one.
 
     Exists because the deterministic gate passed a commit whose DEPLOY then
@@ -145,7 +148,8 @@ async def run_frontend_build(repo_root: str) -> dict:
     import json as _json
     pkg = pathlib.Path(repo_root) / "frontend" / "package.json"
     try:
-        has_build = "build" in (_json.loads(pkg.read_text()).get("scripts") or {})
+        scripts: dict[str, Any] = _json.loads(pkg.read_text()).get("scripts") or {}
+        has_build = "build" in scripts
     except (OSError, ValueError):
         has_build = False
     if not has_build:
@@ -155,7 +159,7 @@ async def run_frontend_build(repo_root: str) -> dict:
     return {"ran": True, "ok": r["ok"], "output": r["output"][-4000:]}
 
 
-def _declared_checks(repo_name: str) -> list[dict] | None:
+def _declared_checks(repo_name: str) -> list[dict[str, Any]] | None:
     """A project's own gate commands, when projects.json declares them.
 
     The gate was npm scripts only, so a repository with no package.json
@@ -167,19 +171,22 @@ def _declared_checks(repo_name: str) -> list[dict] | None:
         from agent.config import PROJECTS
     except Exception:  # noqa: BLE001
         return None
-    declared = (PROJECTS.get(repo_name) or {}).get("checks")
+    declared: Any = (PROJECTS.get(repo_name) or {}).get("checks")
     if not isinstance(declared, list) or not declared:
         return None
-    out = []
-    for c in declared:
-        if isinstance(c, dict) and isinstance(c.get("cmd"), str) and c["cmd"].strip():
+    out: list[dict[str, Any]] = []
+    for item in cast("list[Any]", declared):
+        if not isinstance(item, dict):
+            continue
+        c = cast("dict[str, Any]", item)
+        if isinstance(c.get("cmd"), str) and c["cmd"].strip():
             out.append({"name": str(c.get("name") or f"check {len(out) + 1}")[:60], "cmd": c["cmd"],
                         "timeout_s": int(c.get("timeout_s") or _rs.as_int("check_test_timeout_s"))})
     return out or None
 
 
-async def _run_declared(repo_root: str, declared: list[dict]) -> dict:
-    checks = {}
+async def _run_declared(repo_root: str, declared: list[dict[str, Any]]) -> dict[str, Any]:
+    checks: dict[str, dict[str, Any]] = {}
     for c in declared:
         r = await run_shell_sandboxed(c["cmd"], repo_root, timeout=c["timeout_s"], network="none")
         output = r["output"][-4000:]
@@ -190,7 +197,7 @@ async def _run_declared(repo_root: str, declared: list[dict]) -> dict:
     return {"all_ok": all_ok, "checks": checks, "summary": summary}
 
 
-async def run_all_checks(repo_root: str, repo_name: str) -> dict:
+async def run_all_checks(repo_root: str, repo_name: str) -> dict[str, Any]:
     """The full gate: typecheck + lint + test. Used by both the agent-facing
     tool and the outer verify_and_ship node so there's exactly one
     definition of "all checks passed" in this system.

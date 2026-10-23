@@ -21,8 +21,13 @@ import asyncio
 import logging
 import time
 from datetime import datetime
+from typing import Any
 
 import httpx
+
+# gate_on_actions imports git.py's _git: the tools package's shared git runner,
+# private to the package rather than public API.
+# pyright: reportPrivateUsage=false
 
 logger = logging.getLogger("tektonix")
 
@@ -37,14 +42,14 @@ _PASSING = frozenset({"success", "skipped", "neutral"})
 START_GRACE_S = 180
 
 
-def latest_runs(runs: list[dict]) -> list[dict]:
+def latest_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One run per workflow and event: the newest.
 
     A workflow run superseded by a newer one for the same commit (a re-run, or
     a `concurrency: cancel-in-progress` group cancelling the older) says
     nothing about the commit, and its `cancelled` must not read as a failure.
     """
-    newest: dict[tuple, dict] = {}
+    newest: dict[tuple[Any, Any], dict[str, Any]] = {}
     for run in runs:
         key = (run.get("workflow_id") or run.get("name"), run.get("event"))
         if key not in newest or int(run.get("id") or 0) > int(newest[key].get("id") or 0):
@@ -52,7 +57,7 @@ def latest_runs(runs: list[dict]) -> list[dict]:
     return list(newest.values())
 
 
-def verdict(runs: list[dict]) -> tuple[str, list[dict]]:
+def verdict(runs: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     """("none" | "pending" | "failed" | "passed", the failed runs).
 
     Failed as soon as one run has finished red: the rest cannot make the
@@ -82,7 +87,7 @@ def _refused(r: httpx.Response) -> str | None:
     return None
 
 
-async def _runs_for(client: httpx.AsyncClient, token: str, slug: str, sha: str) -> list[dict]:
+async def _runs_for(client: httpx.AsyncClient, token: str, slug: str, sha: str) -> list[dict[str, Any]]:
     r = await client.get(f"{API}/repos/{slug}/actions/runs", headers=_headers(token),
                          params={"head_sha": sha, "per_page": 100})
     refused = _refused(r)
@@ -92,24 +97,29 @@ async def _runs_for(client: httpx.AsyncClient, token: str, slug: str, sha: str) 
     return r.json().get("workflow_runs") or []
 
 
-async def _failed_jobs(client: httpx.AsyncClient, token: str, slug: str, run: dict) -> list[dict]:
+def _failed_steps(job: dict[str, Any]) -> list[str]:
+    steps: list[dict[str, Any]] = job.get("steps") or []
+    return [s.get("name", "") for s in steps
+            if s.get("conclusion") not in _PASSING and s.get("conclusion") is not None]
+
+
+async def _failed_jobs(client: httpx.AsyncClient, token: str, slug: str, run: dict[str, Any]) -> list[dict[str, Any]]:
     """The red jobs of one run and the steps that failed in each -- what the
     agent needs to reproduce the failure locally. Falls back to the run itself
     when the jobs cannot be read."""
-    fallback = [{"workflow": run.get("name", ""), "job": "", "steps": [],
+    fallback: list[dict[str, Any]] = [{"workflow": run.get("name", ""), "job": "", "steps": [],
                  "conclusion": run.get("conclusion"), "url": run.get("html_url", "")}]
     try:
         r = await client.get(f"{API}/repos/{slug}/actions/runs/{run['id']}/jobs", headers=_headers(token),
                              params={"filter": "latest", "per_page": 100})
         r.raise_for_status()
-        jobs = r.json().get("jobs") or []
+        jobs: list[dict[str, Any]] = r.json().get("jobs") or []
     except (httpx.HTTPError, KeyError, ValueError):
         return fallback
     out = [{
         "workflow": run.get("name", ""),
         "job": j.get("name", ""),
-        "steps": [s.get("name", "") for s in j.get("steps") or []
-                  if s.get("conclusion") not in _PASSING and s.get("conclusion") is not None],
+        "steps": _failed_steps(j),
         "conclusion": j.get("conclusion"),
         "url": j.get("html_url", ""),
     } for j in jobs if j.get("status") == "completed" and j.get("conclusion") not in _PASSING]
@@ -123,13 +133,13 @@ async def _failed_jobs(client: httpx.AsyncClient, token: str, slug: str, run: di
 SETTLE_FROM_JOBS_AFTER_S = 600
 
 
-async def _settle_from_jobs(client: httpx.AsyncClient, token: str, slug: str, runs: list[dict],
-                            now: float | None = None) -> list[dict]:
+async def _settle_from_jobs(client: httpx.AsyncClient, token: str, slug: str, runs: list[dict[str, Any]],
+                            now: float | None = None) -> list[dict[str, Any]]:
     """The runs, with any long-pending one whose jobs have all completed read
     as completed: success when every job passed, failure otherwise. A run with
     no jobs yet, an unfinished job, or jobs that cannot be read stays as it is."""
     now = time.time() if now is None else now
-    out = []
+    out: list[dict[str, Any]] = []
     for run in runs:
         started = _epoch(run.get("run_started_at") or run.get("created_at"))
         if (run.get("status") == "completed" or started is None
@@ -140,7 +150,7 @@ async def _settle_from_jobs(client: httpx.AsyncClient, token: str, slug: str, ru
             r = await client.get(f"{API}/repos/{slug}/actions/runs/{run['id']}/jobs", headers=_headers(token),
                                  params={"filter": "latest", "per_page": 100})
             r.raise_for_status()
-            jobs = r.json().get("jobs") or []
+            jobs: list[dict[str, Any]] = r.json().get("jobs") or []
         except (httpx.HTTPError, KeyError, ValueError):
             out.append(run)
             continue
@@ -153,15 +163,15 @@ async def _settle_from_jobs(client: httpx.AsyncClient, token: str, slug: str, ru
     return out
 
 
-def _epoch(stamp) -> float | None:
+def _epoch(stamp: object) -> float | None:
     try:
         return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
     except (TypeError, ValueError):
         return None
 
 
-def describe_failures(failed: list[dict]) -> str:
-    lines = []
+def describe_failures(failed: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
     for f in failed:
         name = f"{f['workflow']} / {f['job']}" if f.get("job") else f["workflow"]
         steps = f" -- failed step(s): {', '.join(f['steps'])}" if f.get("steps") else ""
@@ -170,7 +180,7 @@ def describe_failures(failed: list[dict]) -> str:
 
 
 async def gate_on_actions(project: str, branch: str, sha: str, title: str, *, timeout: int,
-                          poll_interval: int = 20, start_grace: int = START_GRACE_S) -> dict:
+                          poll_interval: int = 20, start_grace: int = START_GRACE_S) -> dict[str, Any]:
     """Push `branch`, open its pull request, and wait for Actions on `sha`.
 
     {"ok": True, "skipped": why} -- nothing to wait for;
@@ -195,8 +205,8 @@ async def gate_on_actions(project: str, branch: str, sha: str, title: str, *, ti
     base = cfg.get("base_branch") or "main"
 
     listed = await _git(f"ls-tree --name-only {sha} .github/workflows/", live, timeout=15)
-    workflows = [n for n in (listed["output"].split() if listed["ok"] else [])
-                 if n.endswith((".yml", ".yaml"))]
+    names: list[str] = listed["output"].split() if listed["ok"] else []
+    workflows = [n for n in names if n.endswith((".yml", ".yaml"))]
     if not workflows:
         return {"ok": True, "skipped": "no GitHub Actions workflows in this commit"}
 
@@ -257,7 +267,7 @@ async def gate_on_actions(project: str, branch: str, sha: str, title: str, *, ti
                 runs = await _settle_from_jobs(client, token, slug, runs)
                 state, failed = verdict(runs)
                 if state == "failed":
-                    details = []
+                    details: list[dict[str, Any]] = []
                     for run in failed:
                         details.extend(await _failed_jobs(client, token, slug, run))
                     return {"ok": False, "reason": "failed", "failed": details, "pull_request": pr_url}

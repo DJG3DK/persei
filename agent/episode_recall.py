@@ -32,9 +32,10 @@ import logging
 import os
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Set as AbstractSet
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger("tektonix")
 
@@ -54,7 +55,7 @@ class EpisodeHit:
     rank: int
     snippet: str = ""
     leg: str = ""
-    extra: dict = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 # A leg is asked a question and returns its own ranked answer. It is given
@@ -198,7 +199,7 @@ def _rolled_up_tasks(rankings: list[list[EpisodeHit]]) -> set[str]:
     }
 
 
-def _group_key(hit: EpisodeHit, rolled_up: set[str] = frozenset()) -> str:
+def _group_key(hit: EpisodeHit, rolled_up: AbstractSet[str] = frozenset()) -> str:
     """What counts as the same thing found twice.
 
     A hit that names a RECORD is that record, and its ref is the key. A hit
@@ -223,8 +224,8 @@ def _group_key(hit: EpisodeHit, rolled_up: set[str] = frozenset()) -> str:
     return key if key in rolled_up else hit.ref
 
 
-async def recall_episodes(store, repo: str, query: str, *, limit: int = 20,
-                          errors: list[str] | None = None, **kwargs) -> list[EpisodeHit]:
+async def recall_episodes(store: object, repo: str, query: str, *, limit: int = 20,
+                          errors: list[str] | None = None, **kwargs: Any) -> list[EpisodeHit]:
     """Ask every registered leg, fuse what comes back.
 
     A leg that raises is dropped rather than allowed to fail the search: a
