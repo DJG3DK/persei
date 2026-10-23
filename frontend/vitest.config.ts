@@ -21,7 +21,7 @@ export default defineConfig({
       reportsDirectory: './coverage',
       // Reported, not enforced: a threshold that fails CI on an unrelated
       // refactor teaches people to delete tests. Look at the number instead.
-      reporter: ['text-summary', 'html'],
+      reporter: ['text-summary', 'html', 'json-summary'],
       include: ['src/**/*.{ts,tsx}'],
       exclude: [
         'src/**/*.test.{ts,tsx}',
