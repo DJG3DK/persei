@@ -164,7 +164,9 @@ export async function getMe(): Promise<CurrentUser> {
   return res.json();
 }
 
-export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+/** How many passkeys the change removed: a new password ends every passkey
+ *  too (2026-10-22 audit, B27), and the page says so. */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<{ passkeysRemoved: number }> {
   const res = await apiFetch(`${API_BASE}/auth/change-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -174,6 +176,8 @@ export async function changePassword(currentPassword: string, newPassword: strin
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `change password failed: ${res.status}`);
   }
+  const body = await res.json().catch(() => ({}));
+  return { passkeysRemoved: Number(body.passkeys_removed) || 0 };
 }
 
 /** Auto mode and the projects it covers. `repos` is required by the server

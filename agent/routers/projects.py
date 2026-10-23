@@ -810,7 +810,7 @@ async def _create_project(app, req: CreateProjectRequest, user: User) -> dict:
             public_key = await asyncio.to_thread(
                 github_repos.connect_origin, live, created["ssh_url"], name)
             await github_repos.add_deploy_key(token, created["full_name"],
-                                              f"tektonix-{name}", public_key)
+                                              f"persei-{name}", public_key)
             ok, detail = await asyncio.to_thread(github_repos.push_initial, live, name)
             steps.append({"step": "github", "ok": ok,
                           "detail": f"{created['full_name']}: {detail}" if ok else detail})

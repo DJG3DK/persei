@@ -60,6 +60,7 @@ export function SettingsPage({ user, onUserChanged, onProjectsChanged }: Props) 
   const [pwSaving, setPwSaving] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwDone, setPwDone] = useState(false);
+  const [pwPasskeysRemoved, setPwPasskeysRemoved] = useState(0);
 
   // Two-factor. Required (and forced at sign-in) for admins; optional for
   // everyone else, who can turn it on here and off again with their
@@ -117,7 +118,8 @@ export function SettingsPage({ user, onUserChanged, onProjectsChanged }: Props) 
     }
     setPwSaving(true);
     try {
-      await changePassword(current, next);
+      const { passkeysRemoved } = await changePassword(current, next);
+      setPwPasskeysRemoved(passkeysRemoved);
       setCurrent("");
       setNext("");
       setConfirm("");
@@ -275,7 +277,12 @@ export function SettingsPage({ user, onUserChanged, onProjectsChanged }: Props) 
                   At least 12 characters, with an uppercase letter, a lowercase letter, and a digit.
                 </p>
                 {pwError && <div className="settings-error">{pwError}</div>}
-                {pwDone && <div className="settings-ok">Password updated.</div>}
+                {pwDone && (
+                  <div className="settings-ok" role="status">
+                    Password updated.
+                    {pwPasskeysRemoved > 0 && ` Your ${pwPasskeysRemoved === 1 ? "passkey was" : `${pwPasskeysRemoved} passkeys were`} removed with it; add a new one under Passkeys.`}
+                  </div>
+                )}
                 <button className="submit-btn" type="submit" disabled={pwSaving || !current || !next || !confirm}>
                   {pwSaving ? "Saving…" : "Update password"}
                 </button>

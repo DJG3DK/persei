@@ -441,7 +441,7 @@ async def test_telegram_endpoint(request: Request, user: User = Depends(require_
         raise HTTPException(400, "telegram is not configured -- save a bot token and chat id first")
     token, chat_id = row
     ok = await send_telegram(token, chat_id, task_alert(
-        "done", "tektonix", "Test alert from the dashboard settings page",
+        "done", "persei", "Test alert from the dashboard settings page",
         0.00, "If you can read this, task alerts will reach you here."))
     if not ok:
         raise HTTPException(502, "telegram rejected the send -- check the bot token and chat id (and that you have messaged the bot once)")

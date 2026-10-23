@@ -25,7 +25,7 @@ const STATE_LABEL: Record<GitHubItemState, string> = {
   seen: "seen (source off)",
   proposed: "waiting for you",
   task_created: "task started",
-  awaiting_rescan: "fix merged, waiting for GitHub to re-scan",
+  awaiting_rescan: "done, waiting for GitHub to catch up",
   dismissed: "dismissed",
   snoozed: "snoozed",
   resolved: "resolved on GitHub",

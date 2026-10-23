@@ -98,7 +98,7 @@ self.addEventListener('push', (event) => {
     badge: '/icon-192.png',
     // Collapses repeats about the same project: three escalations replace one
     // another on the lock screen instead of stacking into a wall.
-    tag: data.tag || 'tektonix',
+    tag: data.tag || 'persei',
     renotify: true,
     data: { url: sameOriginPath(data.url) },
   }));

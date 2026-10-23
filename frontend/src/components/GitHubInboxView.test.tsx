@@ -93,7 +93,7 @@ describe("GitHubInboxView", () => {
     const user = userEvent.setup();
     const onOpenTask = vi.fn();
     render(<GitHubInboxView isAdmin={true} onOpenTask={onOpenTask} />);
-    expect(await screen.findByText(/fix merged, waiting for GitHub to re-scan/)).toBeInTheDocument();
+    expect(await screen.findByText(/done, waiting for GitHub to catch up/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open task 78db77be/ })).toBeInTheDocument();
     // one start button only: the waiting item has none
     expect(screen.getAllByRole("button", { name: /start/i })).toHaveLength(1);

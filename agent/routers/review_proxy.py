@@ -30,13 +30,13 @@ router = APIRouter(tags=["review"])
 # --- the review dashboard, proxied ------------------------------------------
 
 # The review services listen on 4100/4101 and hold the only write path into a
-# live repo, so they bind loopback and publish nothing. On a host install nginx
-# bridges the console to them at /_review/, injecting the shared secret the
-# browser must never hold. The container bundle has no nginx, so this proxy
-# is the same bridge in the one process that is already the authenticated
-# front door: admin, over the console's session, with the ports still
-# unpublished (until 2026-09-20 Check now, the diff view and the manual merge
-# worked only on a host install).
+# live repo, so they bind loopback and publish nothing. This proxy is the one
+# bridge to them, on a host install and in the container bundle alike: the
+# process that is already the authenticated front door adds the shared secret
+# the browser must never hold, for an admin over the console's session. nginx
+# used to inject the secret on a host install; it no longer does (867db54).
+# Until 2026-09-20 Check now, the diff view and the manual merge worked only
+# on a host install.
 _REVIEW_PROXY_HOP_BY_HOP = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
