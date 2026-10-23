@@ -32,6 +32,7 @@ from agent.config import PROJECTS, load_config, require_server_config
 from agent.observability import install_langsmith
 from agent import paths
 from agent import tasks
+from agent import rate_limit
 from agent import task_runtime
 from agent.outer_graph import build_outer_graph, open_checkpointer, open_store
 from agent.graph import project_slot
@@ -309,6 +310,9 @@ async def lifespan(app: FastAPI):
         app.state.auth_pool = auth_pool
         from agent import passkeys as _passkeys  # noqa: PLC0415
         await _passkeys.ensure_schema(auth_pool)
+        # The sign-in brake counts in the database, so a restart keeps a
+        # lockout and every worker shares one count (agent/rate_limit.py).
+        rate_limit.install(await rate_limit.open_for(config, auth_pool))
         generated_password = await auth.seed_admin_if_none(auth_pool, config.admin_email)
         if generated_password:
             # Only ever printed once, the very first time this deployment

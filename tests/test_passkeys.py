@@ -173,7 +173,6 @@ async def app_client(monkeypatch):
 
     monkeypatch.delenv("WEBAUTHN_RP_ID", raising=False)
     monkeypatch.delenv("WEBAUTHN_ORIGINS", raising=False)
-    rate_limit.reset_rate_limits()
     schema = f"passkeys_{uuid.uuid4().hex[:12]}"
     with psycopg.connect(PG_DSN, autocommit=True) as conn:
         conn.execute(f"CREATE SCHEMA {schema}")
@@ -188,6 +187,7 @@ async def app_client(monkeypatch):
     try:
         async with auth.open_auth_pool(SimpleNamespace(pg_dsn=dsn)) as pool:
             await passkeys.ensure_schema(pool)
+            rate_limit.install(await rate_limit.open_for(SimpleNamespace(dsn=dsn), pool))
             app = FastAPI()
             app.state.auth_pool = pool
             app.state.config = SimpleNamespace()

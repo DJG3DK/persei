@@ -79,11 +79,11 @@ async def list_passkeys(request: Request, user: User = Depends(require_full_auth
 
 @router.post("/api/auth/passkeys/register/options")
 async def register_options(request: Request, req: RegisterOptionsRequest, user: User = Depends(require_full_auth)):
-    rate_limit.check_rate_limit(request, "password-recheck", account=user.id)
+    await rate_limit.check_rate_limit(request, "password-recheck", account=user.id)
     row = await auth.get_user_by_id(request.app.state.auth_pool, user.id)
     if not req.password or not auth.verify_password(req.password, row["password_hash"]):
         raise HTTPException(403, "current password required to add a passkey")
-    rate_limit.clear_rate_limit(request, "password-recheck", account=user.id)
+    await rate_limit.clear_rate_limit(request, "password-recheck", account=user.id)
     try:
         return await passkeys.registration_options(request.app.state.auth_pool, _rp(request), user.id, user.email)
     except passkeys.PasskeyError as e:
@@ -122,7 +122,7 @@ async def delete_passkey(request: Request, passkey_id: int, user: User = Depends
 
 @router.post("/api/auth/passkeys/login/options")
 async def login_options(request: Request):
-    rate_limit.check_rate_limit(request, "passkey-login")
+    await rate_limit.check_rate_limit(request, "passkey-login")
     try:
         return await passkeys.login_options(request.app.state.auth_pool, _rp(request))
     except passkeys.PasskeyError as e:
@@ -131,7 +131,7 @@ async def login_options(request: Request):
 
 @router.post("/api/auth/passkeys/login/verify")
 async def login_verify(request: Request, req: LoginVerifyRequest, response: Response):
-    rate_limit.check_rate_limit(request, "passkey-login")
+    await rate_limit.check_rate_limit(request, "passkey-login")
     pool = request.app.state.auth_pool
     try:
         user_id = await passkeys.login(pool, _rp(request), req.challenge_id, req.credential)
