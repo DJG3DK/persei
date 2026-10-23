@@ -51,7 +51,8 @@ def test_images_are_published_once_by_digest_and_signed():
     assert sign < attach, "signed, then attached"
     assert "Publish the release" not in names, "the publish job publishes, after both apps"
     publish = wf["jobs"]["publish"]
-    assert set(publish["needs"]) == {"app-windows", "app-linux"}, "attached while the release is still a draft"
+    # windows-upgrade installs the built installer over Tektonix first (D28).
+    assert set(publish["needs"]) == {"app-windows", "app-linux", "windows-upgrade"}, "attached while the release is still a draft"
     assert "--draft=false" in publish["steps"][-1]["run"]
     assert "tauri signer sign" in app["steps"][sign]["run"] and "digests.json.sig" in app["steps"][attach]["run"]
     rust = (REPO / "app/src-tauri/src/stack.rs").read_text()

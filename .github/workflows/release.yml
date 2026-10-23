@@ -275,6 +275,13 @@ jobs:
           } else {
             Write-Host "::warning::ARTIFACT_SIGNING_PUBLISHER is not set; the signer's name is not checked"
           }
+      # The finished installer, for the upgrade test below (windows-upgrade)
+      # to install over a published Tektonix before anything is published.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-installer
+          path: app/src-tauri/target/release/bundle/nsis/*_x64-setup.exe
+          if-no-files-found: error
       # The updater signature, over the installer's final bytes, in a step
       # that runs nothing but the CLI pinned by app/package-lock.json.
       - name: Sign the installer for the updater
@@ -431,13 +438,24 @@ jobs:
           path: linux-app/
           if-no-files-found: error
 
+  # The installer just built, installed over the published Tektonix 0.9.3 on
+  # a real Windows: shortcuts, uninstall entries, the binary (D28). Runs no
+  # signing step and reads no secret; publish waits for it, so a failure
+  # leaves the release a draft.
+  windows-upgrade:
+    name: Desktop app — upgrade from Tektonix
+    needs: [app-windows]
+    uses: ./.github/workflows/windows-upgrade.yml
+    with:
+      installer-artifact: windows-installer
+
   # Both apps are built: the Linux files join the Windows draft, latest.json
   # gains the Linux entry the AppImage's updater reads, and only then does
   # the release go public (immutable releases take no assets once public).
   publish:
     name: Publish the release
     runs-on: ubuntu-latest
-    needs: [app-windows, app-linux]
+    needs: [app-windows, app-linux, windows-upgrade]
     permissions:
       contents: write
     steps:

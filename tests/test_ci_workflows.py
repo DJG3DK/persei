@@ -24,6 +24,7 @@ from agent import paths
 REPO = paths.REPO_ROOT
 CI = REPO / ".github/workflows/ci.yml"
 RELEASE = REPO / ".github/workflows/release.yml"
+WINDOWS_UPGRADE = REPO / ".github/workflows/windows-upgrade.yml"
 
 
 def _jobs(path: pathlib.Path) -> dict:
@@ -117,15 +118,20 @@ def test_the_doctor_step_passes_on_findings_and_fails_on_a_traceback(tmp_path):
 # The release workflow: pinned actions, a gated build, a validated tag
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("workflow", [RELEASE, CI])
+@pytest.mark.parametrize("workflow", [RELEASE, CI, WINDOWS_UPGRADE])
 def test_every_action_is_pinned_to_a_commit_with_its_release_beside_it(workflow):
     """release.yml holds the updater's signing key, and auto-update is on
     by default: whoever could move a tag like `v7` on an action used there
     could sign an update for every desktop install. A commit cannot be
-    moved. ci.yml is pinned the same way so the two never drift apart."""
+    moved. ci.yml is pinned the same way so the two never drift apart. A
+    workflow of this repository (./.github/workflows/...) is the commit
+    being run, so it needs no pin."""
     uses = re.findall(r"^\s*-?\s*uses:\s*(\S+)(.*)$", workflow.read_text(), re.M)
     assert uses, workflow
     for ref, rest in uses:
+        if ref.startswith("./.github/workflows/"):
+            assert (REPO / ref).is_file(), ref
+            continue
         assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", ref), f"{workflow.name}: {ref} is not pinned to a commit"
         assert re.search(r"#\s*v\d", rest), f"{workflow.name}: {ref} has no release comment for Dependabot"
 
@@ -191,6 +197,40 @@ def test_nothing_builds_or_signs_before_the_gate():
     jobs = _jobs(RELEASE)
     assert "gate" in jobs["images"]["needs"]
     assert "images" in jobs["app-windows"]["needs"]
+
+
+def test_the_release_is_published_only_after_the_windows_upgrade_test_passed():
+    """D28 shipped because only a compile of the hooks covered them. The
+    upgrade job installs the built installer over the published Tektonix
+    0.9.3 on a real Windows, and publish waits for it."""
+    jobs = _jobs(RELEASE)
+    upload = [s for s in jobs["app-windows"]["steps"] if "upload-artifact" in (s.get("uses") or "")]
+    assert len(upload) == 1 and upload[0]["with"]["name"] == "windows-installer"
+    upgrade = jobs["windows-upgrade"]
+    assert upgrade["uses"] == "./.github/workflows/windows-upgrade.yml"
+    assert upgrade["with"]["installer-artifact"] == "windows-installer"
+    assert "app-windows" in upgrade["needs"]
+    assert "windows-upgrade" in jobs["publish"]["needs"]
+
+
+def test_the_windows_upgrade_test_reads_no_secret_and_checks_what_the_user_sees():
+    """It runs on pull requests too, which never see the signing secrets,
+    and it executes a downloaded installer, so that one is pinned by digest."""
+    text = WINDOWS_UPGRADE.read_text()
+    assert "${{ secrets." not in text
+    wf = yaml.safe_load(text)
+    on = wf[True]  # YAML 1.1 reads the bare key `on` as a boolean
+    assert {"workflow_call", "pull_request"} <= set(on)
+    assert "app/src-tauri/windows/**" in on["pull_request"]["paths"]
+    job = wf["jobs"]["upgrade"]
+    modes = {m["mode"]: m["args"] for m in job["strategy"]["matrix"]["include"]}
+    assert modes == {"update": "/S /UPDATE", "install": "/S"}
+    fetch = _step(job, "Tektonix 0.9.3 installer")["run"]
+    assert re.search(r"'[0-9a-f]{64}'", fetch), "the old installer is not pinned by digest"
+    check = _step(job, "What the user sees")["run"]
+    for claim in ("Persei\\persei.exe", "'Programs'", "'Desktop'", "Persei.lnk", "Tektonix.lnk",
+                  "$uninstall\\Tektonix", "$uninstall\\Persei"):
+        assert claim in check, claim
 
 
 # ---------------------------------------------------------------------------
