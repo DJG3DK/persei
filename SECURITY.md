@@ -102,7 +102,7 @@ they could do once running.
 | where | what runs checks | why |
 |---|---|---|
 | host install | the sandbox container | the reviewer is root on the real machine |
-| compose bundle | the same sandbox container, started by `agent` on the reviewer's behalf | the reviewer's container holds the merge secret; only `agent` has the socket |
+| compose bundle | the same sandbox container, started for `agent` by `sandbox-launcher` on the reviewer's behalf | the reviewer's container holds the merge secret; only `sandbox-launcher` has the socket |
 | neither available | **nothing — the review refuses** | see below |
 
 Until 2026-09-26 the bundle ran checks **in the reviewer's own process**, on
@@ -124,8 +124,9 @@ deployment that cannot contain the code. The database checks below run in
 the bundle too, against throwaway services of their own.
 
 Handing the bundle's reviewer the Docker socket instead would give that
-container host-root equivalent, which is why the agent — already holding the
-socket for its own sandboxes — starts the container rather than the reviewer.
+container host-root equivalent, which is why the agent has the container
+started — through the sandbox launcher, the one service that holds the
+socket (below) — rather than the reviewer.
 
 **It fails closed.** If Docker or the sandbox image is missing on a host
 install, the check does not run on the host instead — it returns a refusal
@@ -236,12 +237,22 @@ machine's own loopback services and so still runs these three on the host.
 
 ### What this does not fix
 
-- **The Docker socket in the bundle.** `agent` is given
-  `/var/run/docker.sock` so it can start sibling sandboxes. Anything that can
-  reach that socket can ask for a privileged container, so this is host-root
-  equivalent for that container. `sandbox.py`'s mount allow-list is a guard in
-  the *client*; a socket proxy enforcing it server-side is the fix, and is not
-  built.
+- **The sandbox launcher is root on the host.** Until 2026-10-23 `agent`
+  itself was given `/var/run/docker.sock`, so a compromise of the agent
+  process was root on the host. The socket now lives in `sandbox-launcher`
+  alone (`services/sandbox-launcher/launcher.py`), which the agent reaches
+  over a network only the two of them join, with a key generated on first
+  boot. It starts allow-listed images only, under its own cpu, memory and
+  pids limits, with every capability dropped but CHOWN, DAC_OVERRIDE and
+  FOWNER, `no-new-privileges`, no privileged mode, no host network, and bind
+  mounts only from inside `PROJECTS_DIR` (symlinks resolved first); it
+  execs, kills and reads logs only of the containers it labelled. What is
+  left: whoever has the agent can still run code in an allow-listed image
+  with read-write access to `PROJECTS_DIR`, which the agent container could
+  already write; and a mount source is checked, then mounted by the daemon,
+  so a directory swapped for a symlink in between is a race the launcher
+  does not close. The launcher itself is host-root equivalent, so it runs
+  nothing but the standard library and the docker CLI.
 - **Egress from the sandbox itself.** The agent's own shell runs on the
   default bridge. SSRF is guarded host-side (`agent/tools/url_guard.py`), not
   at the network layer.

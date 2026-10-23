@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
-pub const IMAGES: [&str; 4] = ["agent", "router", "reviewer", "sandbox"];
+pub const IMAGES: [&str; 5] = ["agent", "router", "reviewer", "sandbox", "launcher"];
 pub const REGISTRY: &str = "ghcr.io/djg3dk";
 pub const REPO: &str = "DJG3DK/persei";
 pub const DASHBOARD: &str = "http://localhost:8100";
@@ -301,8 +301,9 @@ pub fn prepare(app: &AppHandle) -> Result<PathBuf, String> {
         }
         std::fs::copy(&from, &to).map_err(|e| format!("could not copy {}: {e}", from.display()))?;
     }
-    // The compose file binds this directory into the agent; an absent source
-    // becomes an empty directory docker creates as root. Make it ourselves.
+    // The compose file names this directory as the sandbox image's build
+    // context (built by a source checkout, pulled here). Make it ourselves,
+    // so nothing finds it missing.
     std::fs::create_dir_all(dst.join("docker/agent-sandbox")).map_err(|e| e.to_string())?;
     let env = dst.join(".env");
     let fresh = !env.exists();
@@ -1552,7 +1553,7 @@ mod tests {
             "ghcr.io/djg3dk/tektonix-agent:v0.9.0"
         );
         assert_eq!(local_name("reviewer"), "tektonix-reviewer:latest");
-        assert_eq!(IMAGES, ["agent", "router", "reviewer", "sandbox"]);
+        assert_eq!(IMAGES, ["agent", "router", "reviewer", "sandbox", "launcher"]);
     }
 
     #[test]

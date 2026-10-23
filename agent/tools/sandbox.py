@@ -31,6 +31,7 @@ import socket
 import contextlib
 import uuid
 
+from agent.tools import sandbox_launcher as launcher
 from agent.tools.shell import GIT_IDENTITY_VARS, ShellTimeout
 
 logger = logging.getLogger("tektonix")
@@ -47,6 +48,12 @@ logger = logging.getLogger("tektonix")
 # comma-separated list of `container_prefix=host_prefix` pairs; unset (the
 # normal single-host install) means the identity mapping, which is exactly
 # today's behaviour.
+#
+# The compose bundle no longer needs it: the agent there has no socket, and
+# the sandbox launcher (agent/tools/sandbox_launcher.py) is handed paths as
+# the agent sees them and maps its fixed root to PROJECTS_DIR itself. So in
+# the bundle host_path is the identity whatever the map says -- a host path
+# would name nothing inside the launcher's root, and be refused.
 #
 #   AGENT_HOST_PATH_MAP=/projects=C:\dev,/workspaces=D:\work
 _HOST_PATH_MAP_ENV = "AGENT_HOST_PATH_MAP"
@@ -75,7 +82,7 @@ def host_path(path: str) -> str:
     Identity unless AGENT_HOST_PATH_MAP says otherwise. Only whole path
     SEGMENTS match, so a prefix of "/projects" never rewrites "/projects-old".
     """
-    if not path:
+    if not path or launcher.enabled():
         return path
     for container, host in _host_path_map():
         if path == container:
@@ -141,6 +148,9 @@ async def _kill_container(name: str) -> None:
     # exactly the same class of bug run_shell's own _kill_process_group
     # exists to prevent, just one layer up (container instead of process
     # group). `docker kill` + `--rm` together tear it down completely.
+    if launcher.enabled():
+        await launcher.kill(name)
+        return
     try:
         proc = await asyncio.create_subprocess_exec(
             "docker", "kill", name,
@@ -339,6 +349,12 @@ async def reclaim(cwd: str, image: str | None = None) -> None:
             *owner_args(owner), "--security-opt", "no-new-privileges",
             "-v", f"{host_path(cwd)}:/workspace", image or sandbox_image_for(cwd),
             "sh", "-c", give_back_line(owner)]
+    if launcher.enabled():
+        try:
+            await launcher.run(argv, 60)
+        except launcher.LauncherError as e:
+            logger.warning("could not hand files in %s back to %s: %s", cwd, owner, e)
+        return
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
@@ -506,6 +522,9 @@ async def run_shell_sandboxed(
         image,
         *_shell(cmd, owner),
     ]
+    _timeout = timeout if timeout is not None else _rs.as_int("sandbox_command_timeout_s")
+    if launcher.enabled():
+        return await _run_via_launcher(docker_args, container_name, cwd, image, cmd, _timeout)
     proc = await asyncio.create_subprocess_exec(
         *docker_args,
         stdin=asyncio.subprocess.DEVNULL,  # no stdin at all -- matches run_shell's own reasoning
@@ -513,7 +532,6 @@ async def run_shell_sandboxed(
         stderr=asyncio.subprocess.STDOUT,
     )
     try:
-        _timeout = timeout if timeout is not None else _rs.as_int("sandbox_command_timeout_s")
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_timeout)
     except TimeoutError:
         await _kill_container(container_name)
@@ -534,6 +552,24 @@ async def run_shell_sandboxed(
 
     output = stdout.decode("utf-8", errors="replace")
     return {"ok": proc.returncode == 0, "exit_code": proc.returncode, "output": output[-20_000:]}
+
+
+async def _run_via_launcher(argv: list[str], name: str, cwd: str, image: str, cmd: str, timeout: int) -> dict:
+    """run_shell_sandboxed's tail in the bundle: the same argv, started by the
+    sandbox launcher, with the same timeout and Stop handling."""
+    try:
+        code, output, timed_out = await launcher.run(argv, timeout)
+    except launcher.LauncherError as e:
+        # Not run at all: docker's own code for a container that never started.
+        return {"ok": False, "exit_code": launcher.UNAVAILABLE, "output": str(e)}
+    except asyncio.CancelledError:
+        await _kill_container(name)
+        await reclaim(cwd, image)
+        raise
+    if timed_out:
+        await reclaim(cwd, image)
+        raise ShellTimeout(cmd, timeout)
+    return {"ok": code == 0, "exit_code": code, "output": output[-20_000:]}
 
 # --- previewing a running app ----------------------------------------------
 
@@ -593,6 +629,13 @@ async def start_preview_container(cmd: str, cwd: str, container_port: int,
         sandbox_image_for(cwd),
         *_shell(cmd),
     ]
+    if launcher.enabled():
+        code, out = await launcher.run_detached(docker_args)
+        if code != 0:
+            await _kill_container(container_name)
+            return {"ok": False, "error": out[:600]}
+        return {"ok": True, "container": container_name, "port": host_port,
+                "url": f"http://127.0.0.1:{host_port}"}
     try:
         proc = await asyncio.create_subprocess_exec(
             *docker_args,
@@ -638,6 +681,8 @@ async def wait_for_preview(host_port: int, container: str, timeout: int = 120) -
 
 
 async def _container_running(name: str) -> bool:
+    if launcher.enabled():
+        return await launcher.running(name)
     try:
         proc = await asyncio.create_subprocess_exec(
             "docker", "inspect", "-f", "{{.State.Running}}", name,
@@ -649,6 +694,8 @@ async def _container_running(name: str) -> bool:
 
 
 async def preview_logs(container: str, tail: int = 60) -> str:
+    if launcher.enabled():
+        return (await launcher.logs(container, tail))[-4000:]
     try:
         proc = await asyncio.create_subprocess_exec(
             "docker", "logs", "--tail", str(tail), container,
@@ -664,6 +711,12 @@ async def stop_preview_container(name: str) -> None:
     if owner:
         # What the dev server wrote (.next, a cache) goes back to the owner
         # while the container still runs; after the kill there is no shell.
+        if launcher.enabled():
+            code, _ = await launcher.exec_in(name, ["sh", "-c", give_back_line(owner)], 60)
+            if code != 0:
+                logger.warning("could not hand the preview's files back in %s", name)
+            await _kill_container(name)
+            return
         try:
             proc = await asyncio.create_subprocess_exec(
                 "docker", "exec", name, "sh", "-c", give_back_line(owner),

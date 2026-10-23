@@ -27,6 +27,8 @@ import time
 
 import httpx
 
+from agent.tools import sandbox_launcher as launcher
+
 logger = logging.getLogger("tektonix")
 
 SANDBOX_IMAGE = "tektonix-sandbox:latest"
@@ -92,7 +94,8 @@ def _image_present() -> bool:
 
 async def _check_sandbox_image() -> dict:
     """Every bash call the coder makes runs in this image. Missing, and tasks
-    fail one tool call in, after the planning spend."""
+    fail one tool call in, after the planning spend. In the bundle the agent
+    has no docker of its own: the sandbox launcher is asked instead."""
     global _image_cache
     now = time.monotonic()
     missing = {"ok": False, "reason": "sandbox_image_missing",
@@ -100,7 +103,10 @@ async def _check_sandbox_image() -> dict:
     if _image_cache and now - _image_cache[0] < _IMAGE_CACHE_TTL_S:
         return {"ok": True} if _image_cache[1] else missing
     try:
-        present = await asyncio.to_thread(_image_present)
+        if launcher.enabled():
+            present = await launcher.image_present(SANDBOX_IMAGE)
+        else:
+            present = await asyncio.to_thread(_image_present)
     except Exception:  # noqa: BLE001 -- docker missing or not answering
         logger.warning("health: docker image lookup failed", exc_info=True)
         return {"ok": False, "reason": "docker_unavailable",

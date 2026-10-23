@@ -13,7 +13,7 @@ import yaml
 from agent import paths
 
 REPO = paths.REPO_ROOT
-IMAGES = {"agent", "router", "reviewer", "sandbox"}
+IMAGES = {"agent", "router", "reviewer", "sandbox", "launcher"}
 
 
 def test_the_release_workflow_publishes_every_image_the_compose_file_names():

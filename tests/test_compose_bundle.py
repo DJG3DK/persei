@@ -136,3 +136,43 @@ def test_the_readme_lists_exactly_the_volumes_compose_declares():
     listed = set(re.findall(r"`([a-z]+)`", section))
     declared = set(render()["volumes"])
     assert listed == declared, f"README lists {sorted(listed)}; compose declares {sorted(declared)}"
+
+
+def test_only_the_sandbox_launcher_holds_the_docker_socket():
+    """The agent held /var/run/docker.sock until 2026-10-23, which made a
+    compromise of the agent process root on the host. The socket is the
+    launcher's alone, the launcher is reachable from the agent alone, and
+    its key is mounted by the two of them and the service that writes it."""
+    rendered = render(PROJECTS_DIR="/srv/code")
+    services = rendered["services"]
+    holders = {name for name, svc in services.items()
+               for v in svc.get("volumes", []) if "docker.sock" in str(v.get("source"))}
+    assert holders == {"sandbox-launcher"}, holders
+
+    on_launcher_net = {name for name, svc in services.items() if "launcher" in (svc.get("networks") or {})}
+    assert on_launcher_net == {"agent", "sandbox-launcher"}, on_launcher_net
+    assert rendered["networks"]["launcher"]["internal"] is True
+    launcher = services["sandbox-launcher"]
+    assert set(launcher["networks"]) == {"launcher"} and not launcher.get("ports")
+
+    mounts = {name: _volumes(svc) for name, svc in services.items()}
+    assert {n for n, m in mounts.items() if "launcherkey" in m} == {"postgres", "sandbox-launcher", "agent"}
+    for name in ("sandbox-launcher", "agent"):
+        env = services[name]["environment"]
+        assert env["SANDBOX_LAUNCHER_KEY_FILE"].startswith(mounts[name]["launcherkey"]), name
+        ro = [v for v in services[name]["volumes"] if v["type"] == "volume" and v["source"] == "launcherkey"][0]
+        assert ro.get("read_only") is True, f"{name} can write the launcher key"
+
+    # The agent hands the launcher paths under /projects; the launcher sees
+    # the same folder there, read-only, and maps it to the host's own path.
+    binds = {v["target"]: v for v in launcher["volumes"] if v["type"] == "bind"}
+    assert binds["/projects"]["source"] == "/srv/code" and binds["/projects"].get("read_only") is True
+    assert launcher["environment"]["SANDBOX_LAUNCHER_ROOT"] == "/projects"
+    assert launcher["environment"]["SANDBOX_HOST_ROOT"] == "/srv/code"
+    agent_env = services["agent"]["environment"]
+    assert "AGENT_HOST_PATH_MAP" not in agent_env, "the launcher maps paths now"
+    assert agent_env["SANDBOX_LAUNCHER_URL"] == "http://sandbox-launcher:8300"
+    assert services["agent"]["depends_on"]["sandbox-launcher"]["condition"] == "service_healthy"
+    # The database checks name the same network and containers on both sides.
+    for key in ("REVIEW_CHECKS_NETWORK", "REVIEW_CHECKS_POSTGRES_CONTAINER", "REVIEW_CHECKS_REDIS_CONTAINER"):
+        assert launcher["environment"][key] == agent_env[key], key

@@ -287,13 +287,14 @@ that needs a registry becomes a false `NEEDS_FIXES`.
 which is a decision rather than a backlog item, so it should stop appearing
 as work.
 
-The Docker socket is mounted into the agent so it can start sibling sandbox
-containers. Anything that can reach that socket can ask for a privileged
-container, so within the bundle that container is host-root equivalent, and
-`agent/tools/sandbox.py`'s mount allow-list is a guard in the CLIENT -- a
-socket proxy enforcing it server-side is the only real fix.
+The Docker socket half of this is **closed, 2026-10-23**: it was mounted
+into the agent, which made the agent container host-root equivalent with
+`agent/tools/sandbox.py`'s mount allow-list as a guard in the CLIENT. The
+bundle's `sandbox-launcher` (`services/sandbox-launcher/launcher.py`) now
+holds the socket alone and enforces the image allow-list, the limits and the
+mount root server-side (SECURITY.md, "What this does not fix").
 
-Why it is accepted rather than fixed:
+Why the rest was accepted rather than fixed:
 
 * On a host install it changes nothing. The agent already runs as root on
   that machine, so the socket grants it nothing it does not have. The

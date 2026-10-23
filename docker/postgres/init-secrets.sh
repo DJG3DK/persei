@@ -9,7 +9,8 @@
 #
 # One volume per secret, mounted only where that secret is read: the
 # password in `pgsecret` (the agent), the key in `routerkey` (the router,
-# the agent, the commit reviewer). Both used to sit in one `bundlesecrets`
+# the agent, the commit reviewer), and the sandbox launcher's key in
+# `launcherkey` (the launcher and the agent). Both used to sit in one `bundlesecrets`
 # volume that every consumer mounted whole, so the router and the reviewer
 # could read the database password. That volume is still mounted here, and
 # an upgrade's values are carried over from it on the first start.
@@ -33,6 +34,7 @@ set -eu
 
 pgdir=${TEKTONIX_PG_SECRET_DIR:-/run/tektonix-pg}
 rkdir=${TEKTONIX_ROUTER_KEY_DIR:-/run/tektonix-router}
+lkdir=${TEKTONIX_LAUNCHER_KEY_DIR:-}
 legacy=${TEKTONIX_LEGACY_SECRETS_DIR:-/run/tektonix-secrets}
 pgdata=${PGDATA:-/var/lib/postgresql/data}
 mkdir -p "$pgdir" "$rkdir"
@@ -105,6 +107,18 @@ if [ -n "${MODEL_ROUTER_KEY:-}" ] && [ "$MODEL_ROUTER_KEY" != "sk-local-dev" ]; 
 elif [ ! -s "$rkdir/model_router_key" ]; then
     write "$rkdir" model_router_key "sk-$(rand)"
     echo "[init-secrets] generated a model router key in the routerkey volume"
+fi
+
+# The sandbox launcher's key: the only thing between the agent's network and
+# the one service that holds the Docker socket. Nobody chooses it, so there
+# is no .env value to honour; a lost one is simply generated again, and the
+# launcher and the agent read it at their next start.
+if [ -n "$lkdir" ]; then
+    mkdir -p "$lkdir"
+    if [ ! -s "$lkdir/launcher_key" ]; then
+        write "$lkdir" launcher_key "$(rand)"
+        echo "[init-secrets] generated a sandbox launcher key in the launcherkey volume"
+    fi
 fi
 
 unset POSTGRES_PASSWORD MODEL_ROUTER_KEY
