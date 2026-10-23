@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from agent import paths
+from agent.store_paging import all_items
 
 logger = logging.getLogger("agent.project_removal")
 
@@ -133,21 +134,17 @@ async def collect(store, repo: str, index=None) -> dict[str, Any]:
         "namespaces": {},
     }
     for label, ns in namespaces(repo).items():
-        rows = []
-        try:
-            for item in await store.asearch(ns, limit=1000):
-                rows.append({"key": item.key, "value": item.value})
-        except Exception:  # noqa: BLE001 -- a namespace that cannot be read is empty, not fatal
-            logger.exception("archive: could not read %s for %s", label, repo)
-        out["namespaces"][label] = rows
+        # Every page, and an error propagates: a namespace that would not read
+        # used to be archived as empty, the caller saw a good archive, and
+        # purge() then deleted the rows it never saved.
+        out["namespaces"][label] = [
+            {"key": item.key, "value": item.value} for item in await all_items(store, ns)]
     out["item_count"] = sum(len(v) for v in out["namespaces"].values())
     out[HISTORY_FTS_KEY] = []
     if index is not None:
-        # Deliberately NOT swallowed, unlike a namespace that will not read,
-        # and the difference is which copy is the last one. A store
-        # namespace still exists after this; these rows are the ONLY copy of
-        # every episode the pruner already deleted, and purge() -- which
-        # runs next -- DELETEs them. Swallowing it here wrote an archive
+        # Not swallowed either: these rows are the ONLY copy of every
+        # episode the pruner already deleted, and purge() -- which runs
+        # next -- DELETEs them. Swallowing it here wrote an archive
         # that said it was fine, reported the step ok, and walked straight
         # past the caller's refuse-to-continue guard, the one whose comment
         # says deleting it anyway is the one mistake with no undo.
@@ -232,21 +229,31 @@ async def restore(store, repo: str, doc: dict[str, Any], index=None) -> int:
     return written
 
 
-async def purge(store, repo: str, index=None) -> int:
-    """Remove every row this project owns."""
+async def purge(store, repo: str, index=None, failed: list[str] | None = None) -> int:
+    """Remove every row this project owns.
+
+    A namespace that cannot be cleared is logged and, when the caller passes
+    `failed`, named there, so the removal can say what it left behind.
+    """
     removed = 0
-    for ns in namespaces(repo).values():
+    for label, ns in namespaces(repo).items():
         try:
-            for item in await store.asearch(ns, limit=1000):
-                await store.adelete(ns, item.key)
+            # Read the whole namespace first, then delete: deleting while
+            # paging by offset skips a page's worth of rows each time.
+            for item in await all_items(store, ns):
+                await store.adelete(tuple(getattr(item, "namespace", None) or ns), item.key)
                 removed += 1
         except Exception:  # noqa: BLE001 -- keep going; a stuck namespace must not strand the rest
             logger.exception("purge: could not clear %s for %s", ns, repo)
+            if failed is not None:
+                failed.append(label)
     if index is not None:
         try:
             removed += await index.forget_project(repo)
         except Exception:  # noqa: BLE001 -- same rule as a stuck namespace
             logger.exception("purge: could not clear the history index for %s", repo)
+            if failed is not None:
+                failed.append(HISTORY_FTS_KEY)
     return removed
 
 

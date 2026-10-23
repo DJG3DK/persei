@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from agent import audit, auth, history_index, lifecycle, live_state, planning_log, tasks, task_runtime
 from agent import config as agent_config
+from agent.store_paging import recent_items
 from agent.routers import audit_store
 from agent.auth import User, check_repo_access, require_full_auth
 from agent.graph import read_with_retry
@@ -145,7 +146,7 @@ async def list_tasks(request: Request, repo: str | None = None, user: User = Dep
         repos = [r for r in agent_config.PROJECTS if user.can_access(r)]
     items = []
     for r in repos:
-        results = await read_with_retry(lambda r=r: store.asearch(("tasks", r), limit=50))
+        results = await read_with_retry(lambda r=r: recent_items(store, ("tasks", r), 50))
         items.extend(_list_entry(item.value) for item in results)
     items.sort(key=lambda t: t.get("created_at", 0), reverse=True)
     return items

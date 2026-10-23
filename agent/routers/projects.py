@@ -244,9 +244,12 @@ async def remove_project_endpoint(request: Request, name: str, req: RemoveProjec
                 raise HTTPException(500, (
                     f"could not archive {name}'s memory, so nothing was removed "
                     "-- see the server log"))
-        removed = await project_removal.purge(store, name, history_index.default_index())
-        steps.append({"step": "memory", "ok": True,
-                      "detail": f"{removed} item(s) {'archived and removed' if archived else 'deleted'}"})
+        stuck: list[str] = []
+        removed = await project_removal.purge(store, name, history_index.default_index(), stuck)
+        detail = f"{removed} item(s) {'archived and removed' if archived else 'deleted'}"
+        if stuck:
+            detail += f"; could not clear {', '.join(stuck)} (see the server log)"
+        steps.append({"step": "memory", "ok": not stuck, "detail": detail})
 
     ok, detail = await asyncio.to_thread(project_removal.remove_worktree, live, sandbox)
     steps.append({"step": "workspace", "ok": ok, "detail": detail})

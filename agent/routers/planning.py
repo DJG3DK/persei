@@ -32,6 +32,7 @@ from agent.frontend_route import normalize_override
 from agent.graph import read_with_retry
 from agent.planning_chat import planning_thread_config
 from agent.planning_chat import _translate_message as _translate_planning_message
+from agent.store_paging import recent_items
 from agent.tasks import AttachmentEntry
 
 logger = logging.getLogger("tektonix")
@@ -81,7 +82,7 @@ async def list_planning_sessions(request: Request, repo: str | None = None, user
         repos = [r for r in agent_config.PROJECTS if user.can_access(r)]
     items = []
     for r in repos:
-        results = await read_with_retry(lambda r=r: store.asearch(("planning", r), limit=100))
+        results = await read_with_retry(lambda r=r: recent_items(store, ("planning", r), 100))
         items.extend(item.value for item in results)
     items.sort(key=lambda s: s.get("updated_at", 0), reverse=True)
     return items

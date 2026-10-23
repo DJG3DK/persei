@@ -33,9 +33,18 @@ class FakeStore:
     async def aput(self, ns, key, value):
         self.data.setdefault(tuple(ns), {})[key] = value
 
-    async def asearch(self, ns, limit=100):
-        items = self.data.get(tuple(ns), {})
-        return [type("Item", (), {"key": k, "value": v})() for k, v in list(items.items())[:limit]]
+    # Caps every page below what was asked for, like a real store may, so a
+    # reader that takes one call (or a short page) for the whole namespace
+    # shows up with rows missing.
+    page_cap = 50
+    broken: set[tuple] = set()
+
+    async def asearch(self, ns, limit=100, offset=0):
+        if tuple(ns) in self.broken:
+            raise RuntimeError("connection reset")
+        items = list(self.data.get(tuple(ns), {}).items())
+        page = items[offset:offset + min(limit, self.page_cap)]
+        return [type("Item", (), {"key": k, "value": v, "namespace": tuple(ns)})() for k, v in page]
 
     async def adelete(self, ns, key):
         self.data.get(tuple(ns), {}).pop(key, None)
@@ -567,3 +576,31 @@ def test_a_removal_takes_the_project_s_index_rows_with_it(wired):
     assert res.status_code == 200, res.text
     assert index.forgotten == ["demo"]
     assert [r["repo"] for r in index.rows] == ["keeper"]
+
+
+# ---------------------------------------------------------------------------
+# a namespace that will not read, and one larger than a page
+# ---------------------------------------------------------------------------
+
+async def test_collect_refuses_when_a_namespace_will_not_read(store):
+    # Archived as empty, it read as a good archive and purge() deleted it.
+    store.broken = {pr.namespaces("demo")["episodes"]}
+    with pytest.raises(RuntimeError):
+        await pr.collect(store, "demo")
+
+
+async def test_archive_and_purge_cover_every_page(store):
+    ns = pr.namespaces("demo")["episodes"]
+    store.data[ns] = {f"e{i}": {"i": i} for i in range(1234)}
+    doc = await pr.collect(store, "demo")
+    assert len(doc["namespaces"]["episodes"]) == 1234
+    await pr.purge(store, "demo")
+    assert store.data[ns] == {}
+
+
+async def test_purge_names_what_it_could_not_clear(store):
+    store.broken = {pr.namespaces("demo")["skills"]}
+    failed: list[str] = []
+    await pr.purge(store, "demo", failed=failed)
+    assert failed == ["skills"]
+    assert store.data[pr.namespaces("demo")["episodes"]] == {}

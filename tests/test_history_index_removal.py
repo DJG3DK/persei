@@ -177,16 +177,14 @@ async def test_an_archive_that_could_not_read_the_index_is_not_an_archive(store)
         await pr.collect(store, "demo", Broken())
 
 
-async def test_a_namespace_that_will_not_read_is_still_survivable(store):
-    """The other half of the same function keeps its old rule, and the
-    difference is which copy is the last one: a store namespace still
-    exists after the archive, and these index rows do not."""
+async def test_a_namespace_that_will_not_read_fails_the_archive(store):
+    """Same rule as the index: purge() runs next and deletes the namespace,
+    so an archive that recorded it as empty was the last copy, empty."""
     class Unreadable:
         data = {}
 
-        async def asearch(self, ns, limit=100):
+        async def asearch(self, ns, limit=100, offset=0):
             raise RuntimeError("the database went away")
 
-    doc = await pr.collect(Unreadable(), "demo", FakeIndex())
-
-    assert doc["item_count"] == 0
+    with pytest.raises(RuntimeError):
+        await pr.collect(Unreadable(), "demo", FakeIndex())
