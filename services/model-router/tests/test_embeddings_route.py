@@ -128,7 +128,8 @@ def test_the_deployments_extra_body_reaches_the_upstream_call(client, monkeypatc
     model would silently widen every vector."""
     calls = _stub(monkeypatch, [(True, _ok())])
     _post(client)
-    assert calls[0]["extra_body"] == {"dimensions": 1536}
+    # (plus the router-wide privacy rule, zero retention by default)
+    assert calls[0]["extra_body"] == {"dimensions": 1536, "provider": {"zdr": True}}
 
 
 def test_a_batch_is_passed_through_as_one_request(client, monkeypatch):

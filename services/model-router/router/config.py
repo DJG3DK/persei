@@ -35,6 +35,9 @@ DEFAULT_CONFIG_PATH = Path(
 DEFAULT_TIMEOUT_S = float(os.environ.get("MODEL_ROUTER_TIMEOUT_S", "600"))
 
 
+PRIVACY_MODES = ("zdr", "deny", "off")
+
+
 @dataclass(frozen=True)
 class Deployment:
     """One `- model_name:` entry."""
@@ -56,6 +59,10 @@ class Table:
     fallbacks: dict[str, list[str]]
     loaded_at: float
     mtime: float
+    # router_settings.privacy: which OpenRouter providers may serve a call.
+    # "zdr" (the default) only those that keep nothing, "deny" only those
+    # that neither store nor train on it, "off" whatever the account allows.
+    privacy: str = "zdr"
 
     def resolve(self, alias: str) -> Deployment | None:
         return self.deployments.get(alias)
@@ -149,9 +156,16 @@ def load(path: Path | None = None) -> Table:
                 if isinstance(targets, list):
                     fallbacks[src] = [str(t) for t in targets]
 
+    raw_privacy = (raw.get("router_settings") or {}).get("privacy")
+    # A bare `privacy: off` is YAML for false; that means off, not the default.
+    privacy = "off" if raw_privacy is False else str(raw_privacy or "zdr").strip().lower()
+    if privacy not in PRIVACY_MODES:
+        logger.warning("router_settings.privacy %r is not one of %s; using zdr", privacy, ", ".join(PRIVACY_MODES))
+        privacy = "zdr"
+
     st = p.stat()
     return Table(deployments=deployments, fallbacks=fallbacks,
-                 loaded_at=time.time(), mtime=st.st_mtime)
+                 loaded_at=time.time(), mtime=st.st_mtime, privacy=privacy)
 
 
 class Registry:

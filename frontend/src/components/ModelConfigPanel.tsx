@@ -1,6 +1,57 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getModelCatalog, getModelConfig, getModelEndpoints, probeForcedToolCall, restartLlmRouter, saveModelConfig, saveProviderPins } from "../api";
-import type { ProviderEndpoint } from "../api";
+import { getModelCatalog, getModelConfig, getModelEndpoints, getPrivacy, probeForcedToolCall, restartLlmRouter, savePrivacy, saveModelConfig, saveProviderPins } from "../api";
+import type { PrivacyMode, ProviderEndpoint } from "../api";
+
+const PRIVACY_LABELS: Record<PrivacyMode, string> = {
+  zdr: "Zero retention: only hosts that keep nothing",
+  deny: "No training: only hosts that neither store nor train on it",
+  off: "Off: whatever your OpenRouter account allows",
+};
+
+/** The router-wide rule on which hosts may see a call. Saved on change: the
+ *  router applies it on its next call, no restart, so it does not wait for
+ *  the pins' Save bar. */
+function PrivacyControl() {
+  const [mode, setMode] = useState<PrivacyMode | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => { getPrivacy().then(setMode).catch((e: Error) => setLoadError(e.message)); }, []);
+  async function change(next: PrivacyMode) {
+    setMsg(null);
+    try {
+      setMode(await savePrivacy(next));
+      setMsg("Saved. The router applies it on its next call.");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "saving failed");
+    }
+  }
+  return (
+    <div className="model-config-privacy">
+      <label htmlFor="router-privacy" className="model-config-privacy-label">Provider privacy</label>
+      <select id="router-privacy" value={mode ?? "zdr"} disabled={mode === null}
+              onChange={(e) => void change(e.target.value as PrivacyMode)}>
+        {(Object.keys(PRIVACY_LABELS) as PrivacyMode[]).map((m) => (
+          <option key={m} value={m}>{PRIVACY_LABELS[m]}</option>
+        ))}
+      </select>
+      <span className="model-config-privacy-note">
+        Applies to every call through the router, the chat app and the reviewers included. A provider pin below
+        still has to pass it.
+      </span>
+      {loadError && <span className="model-config-privacy-msg">{loadError}</span>}
+      {msg && <span className="model-config-privacy-msg" role="status">{msg}</span>}
+    </div>
+  );
+}
+
+function providerRecord(e: ProviderEndpoint): string {
+  const r = e.record;
+  if (!r || r.calls === 0) return "not used by this router this week";
+  const parts = [`${r.calls.toLocaleString()} calls this week`];
+  if (r.errors) parts.push(`${r.errors} errors`);
+  if (r.runaways) parts.push(`${r.runaways} runaways`);
+  return parts.join(", ");
+}
 import type { ModelCatalogEntry, ModelPin } from "../types";
 import { SettingsSaveBar, SettingsSaveProvider, useSettingsSave } from "./SettingsSaveBar";
 import "./ModelConfigPanel.css";
@@ -108,6 +159,9 @@ function ProviderPicker({
           >
             <span>Auto — OpenRouter routes per call</span>
           </button>
+          <div className="provider-picker-note">
+            Hosts outside the router's privacy rule (top of this page) are skipped on each call, even when pinned.
+          </div>
           {loadError && <div className="provider-picker-error">{loadError}</div>}
           {!endpoints && !loadError && <div className="provider-picker-loading">Loading providers…</div>}
           {endpoints?.map((e) => (
@@ -129,6 +183,28 @@ function ProviderPicker({
                   {e.throughput_tps != null ? ` · ${Math.round(e.throughput_tps)} tok/s` : ""}
                   {e.uptime != null ? ` · ${e.uptime.toFixed(1)}% up` : ""}
                   {e.implicit_caching ? " · cache ✓" : ""}
+                </span>
+                <span className="provider-picker-facts">
+                  {e.headquarters ? `Based in ${e.headquarters}` : ""}
+                  {e.datacenters && e.datacenters.length ? ` · servers ${e.datacenters.join(", ")}` : ""}
+                  {e.headquarters || (e.datacenters && e.datacenters.length) ? " · " : ""}
+                  {providerRecord(e)}
+                  {e.privacy_policy_url && (
+                    <>
+                      {" · "}
+                      <span
+                        role="link"
+                        tabIndex={0}
+                        className="provider-picker-policy"
+                        onClick={(ev) => { ev.stopPropagation(); window.open(e.privacy_policy_url!, "_blank", "noopener"); }}
+                        onKeyDown={(ev) => {
+                          if (ev.key === "Enter") { ev.stopPropagation(); window.open(e.privacy_policy_url!, "_blank", "noopener"); }
+                        }}
+                      >
+                        privacy policy ↗
+                      </span>
+                    </>
+                  )}
                 </span>
               </span>
             </button>
@@ -473,6 +549,8 @@ function ModelConfigPins() {
         that do not begin <code>agent-</code> are left alone: they are not this agent&apos;s
         to set.
       </p>
+
+      <PrivacyControl />
 
       {error && <div className="model-config-error">{error}</div>}
 

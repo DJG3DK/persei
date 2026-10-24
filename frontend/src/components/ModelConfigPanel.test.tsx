@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
   getModelEndpoints: vi.fn(),
   probeForcedToolCall: vi.fn(),
   restartLlmRouter: vi.fn(),
+  getPrivacy: vi.fn(),
+  savePrivacy: vi.fn(),
 }));
 
 vi.mock("../api", async (importOriginal) => {
@@ -46,6 +48,8 @@ beforeEach(() => {
   api.getModelConfig.mockResolvedValue({ roles: { "agent-coder": pin("a/one") } });
   api.getModelCatalog.mockResolvedValue(catalog);
   api.saveModelConfig.mockResolvedValue({ roles: { "agent-coder": pin("b/two") } });
+  api.getPrivacy.mockResolvedValue("zdr");
+  api.savePrivacy.mockImplementation(async (m: string) => m);
 });
 
 async function mountAndPick(name: string) {
@@ -219,5 +223,20 @@ describe("in the compose bundle", () => {
     const note = await screen.findByTestId("router-restart-note");
     expect(note.textContent).toContain("already live");
     expect(screen.queryByRole("button", { name: /Restart Router/i })).not.toBeInTheDocument();
+  });
+});
+
+
+describe("provider privacy", () => {
+  it("shows the router's rule and saves a change straight away, without the pins' Save bar", async () => {
+    render(<ModelConfigPanel />);
+    const select = await screen.findByLabelText("Provider privacy");
+    await waitFor(() => expect(select).not.toBeDisabled());
+    expect(select).toHaveValue("zdr");
+    await userEvent.selectOptions(select, "deny");
+    await waitFor(() => expect(api.savePrivacy).toHaveBeenCalledWith("deny"));
+    expect(select).toHaveValue("deny");
+    expect(screen.getByText(/applies it on its next call/)).toBeInTheDocument();
+    expect(api.saveModelConfig).not.toHaveBeenCalled();
   });
 });

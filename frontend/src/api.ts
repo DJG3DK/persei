@@ -499,6 +499,34 @@ export interface ProviderEndpoint {
   latency_s: number | null;
   throughput_tps: number | null;
   implicit_caching: boolean;
+  /** Where the host is and its policy, from OpenRouter's provider list. */
+  headquarters?: string | null;
+  datacenters?: string[];
+  privacy_policy_url?: string | null;
+  /** This router's own last week with the host. */
+  record?: { calls: number; errors: number; runaways: number };
+}
+
+/** Which OpenRouter providers may serve the router's calls. */
+export type PrivacyMode = "zdr" | "deny" | "off";
+
+export async function getPrivacy(): Promise<PrivacyMode> {
+  const res = await apiFetch(`${API_BASE}/model-config/privacy`);
+  if (!res.ok) throw new Error(`privacy setting failed: ${res.status}`);
+  return (await res.json()).mode;
+}
+
+export async function savePrivacy(mode: PrivacyMode): Promise<PrivacyMode> {
+  const res = await apiFetch(`${API_BASE}/model-config/privacy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? `saving privacy failed: ${res.status}`);
+  }
+  return (await res.json()).mode;
 }
 
 export async function getModelEndpoints(modelId: string): Promise<ProviderEndpoint[]> {

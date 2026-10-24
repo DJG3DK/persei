@@ -112,6 +112,20 @@ DEFAULT_PROVIDER_SORT = "throughput"
 DEFAULT_MAX_OUTPUT_TOKENS = 32768
 
 
+def with_privacy(extra_body: dict, mode: str) -> dict:
+    """extra_body with the router-wide privacy rule in its provider block.
+
+    OpenRouter publishes no per-provider "trains on your data" flag, so the
+    rule is enforced where it can be: on every request, by OpenRouter's own
+    filter. A deployment that sets `zdr` or `data_collection` itself keeps
+    its own choice."""
+    provider = extra_body.get("provider") if isinstance(extra_body.get("provider"), dict) else {}
+    if mode == "off" or "zdr" in provider or "data_collection" in provider:
+        return extra_body
+    rule = {"zdr": True} if mode == "zdr" else {"data_collection": "deny"}
+    return {**extra_body, "provider": {**provider, **rule}}
+
+
 def build_body(body: dict, model: str, extra_body: dict) -> dict:
     """The request as OpenRouter will see it.
 

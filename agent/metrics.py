@@ -260,3 +260,35 @@ def run_summary(window_days: int = 7, now: float | None = None) -> dict:
         "window_days": window_days,
         "source": "router-ledger",
     }
+
+
+# What this router has seen from each host of one model, for the provider
+# picker: OpenRouter's own numbers are the last 30 minutes of everyone's
+# traffic, this is the last week of ours. Cached because the ledger is tens
+# of megabytes and the picker opens per role.
+_PROVIDER_RECORD_CACHE: dict[tuple[str, int], tuple[float, dict[str, dict[str, int]]]] = {}
+_PROVIDER_RECORD_TTL_S = 300
+RUNAWAY_TOKENS = 30_000      # as services/model-router/router/fastest.py counts one
+
+
+def provider_record(model: str, window_days: int = 7, now: float | None = None) -> dict[str, dict[str, int]]:
+    """provider name (lower case) -> {"calls", "errors", "runaways"} for
+    `model` over the window. An error counts only when the ledger knows which
+    host failed; most failures happen before one answers."""
+    now = now or time.time()
+    key = (model, window_days)
+    hit = _PROVIDER_RECORD_CACHE.get(key)
+    if hit and now - hit[0] < _PROVIDER_RECORD_TTL_S:
+        return hit[1]
+    out: dict[str, dict[str, int]] = {}
+    for row in _rows(ROUTING_LOG, now - window_days * 86400):
+        if str(row.get("routed_model") or row.get("model") or "") != model or not row.get("provider"):
+            continue
+        rec = out.setdefault(str(row["provider"]).lower(), {"calls": 0, "errors": 0, "runaways": 0})
+        rec["calls"] += 1
+        if row.get("error"):
+            rec["errors"] += 1
+        elif (row.get("completion_tokens") or 0) >= RUNAWAY_TOKENS:
+            rec["runaways"] += 1
+    _PROVIDER_RECORD_CACHE[key] = (now, out)
+    return out

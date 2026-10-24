@@ -17,6 +17,7 @@ file byte-for-byte untouched.
 """
 
 import json
+import logging
 from pathlib import Path
 import re
 import subprocess
@@ -26,6 +27,8 @@ import httpx
 import yaml
 
 from agent.tools.model_rates import ROUTER_CONFIG_PATH, OPENROUTER_MODELS_URL
+
+logger = logging.getLogger("tektonix")
 
 MANAGED_ROLES = {
     "agent-planner": "Planner",
@@ -372,7 +375,100 @@ async def fetch_model_endpoints(model_id: str) -> list[dict]:
             "implicit_caching": bool(e.get("supports_implicit_caching")),
         })
     _ENDPOINTS_CACHE[model_id] = (_time.monotonic(), endpoints)
-    return endpoints
+    return await _with_provider_facts(model_id, endpoints)
+
+
+# -- who each provider is, and how it has done for us (2026-10-24) -----------
+#
+# OpenRouter publishes no per-provider "trains on your data" flag; the router
+# enforces that with router_settings.privacy on every call instead. What the
+# picker can show is where a host is, its policy, and this router's own
+# record with it, which beats a vendor's claim about its tool calling.
+_PROVIDERS_CACHE: tuple[float, dict[str, dict]] | None = None
+_PROVIDERS_TTL_S = 3600
+
+
+async def _provider_directory() -> dict[str, dict]:
+    import time as _time
+    global _PROVIDERS_CACHE
+    if _PROVIDERS_CACHE and _time.monotonic() - _PROVIDERS_CACHE[0] < _PROVIDERS_TTL_S:
+        return _PROVIDERS_CACHE[1]
+    import httpx
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get("https://openrouter.ai/api/v1/providers")
+        r.raise_for_status()
+    found = {str(p.get("name") or "").lower(): {
+        "headquarters": p.get("headquarters"),
+        "datacenters": p.get("datacenters") or [],
+        "privacy_policy_url": p.get("privacy_policy_url"),
+    } for p in (r.json().get("data") or []) if p.get("name")}
+    _PROVIDERS_CACHE = (_time.monotonic(), found)
+    return found
+
+
+async def _with_provider_facts(model_id: str, endpoints: list[dict]) -> list[dict]:
+    """The endpoints with each host's whereabouts, policy link and our own
+    week with it. Either half failing leaves the list as it was."""
+    import asyncio as _asyncio
+    from agent import metrics
+    try:
+        directory = await _provider_directory()
+    except Exception as e:  # noqa: BLE001 -- the picker works without it
+        logger.warning("provider directory unavailable: %s", e)
+        directory = {}
+    try:
+        record = await _asyncio.to_thread(metrics.provider_record, model_id)
+    except Exception as e:  # noqa: BLE001 -- likewise
+        logger.warning("provider record for %s unavailable: %s", model_id, e)
+        record = {}
+    out = []
+    for e in endpoints:
+        name = str(e.get("provider") or "").lower()
+        facts = directory.get(name) or {}
+        out.append({**e, "headquarters": facts.get("headquarters"), "datacenters": facts.get("datacenters") or [],
+                    "privacy_policy_url": facts.get("privacy_policy_url"),
+                    "record": record.get(name) or {"calls": 0, "errors": 0, "runaways": 0}})
+    return out
+
+
+# -- the router's privacy rule -------------------------------------------------
+
+PRIVACY_MODES = ("zdr", "deny", "off")
+
+
+def get_privacy() -> str:
+    """router_settings.privacy, as the router reads it: zero retention unless set."""
+    try:
+        cfg = yaml.safe_load(ROUTER_CONFIG_PATH.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return "zdr"
+    raw = (cfg.get("router_settings") or {}).get("privacy")
+    # YAML reads a bare `off` as false; set_privacy quotes it, a hand edit may not.
+    mode = "off" if raw is False else str(raw or "zdr").strip().lower()
+    return mode if mode in PRIVACY_MODES else "zdr"
+
+
+_PRIVACY_LINE = re.compile(r"^  privacy:.*$", re.MULTILINE)
+
+
+def set_privacy(mode: str) -> str:
+    """Write router_settings.privacy, in place, keeping every comment. The
+    router picks it up on its next call; no restart."""
+    if mode not in PRIVACY_MODES:
+        raise ValueError(f"privacy must be one of {', '.join(PRIVACY_MODES)}")
+    text = ROUTER_CONFIG_PATH.read_text()
+    line = f'  privacy: "{mode}"'           # quoted: YAML would read a bare off as false
+    head = re.search(r"^router_settings:[ \t]*\n", text, re.MULTILINE)
+    if head is None:
+        text = text.rstrip("\n") + f"\n\nrouter_settings:\n{line}\n"
+    else:
+        nxt = _TOP_LEVEL_KEY.search(text, head.end())
+        end = nxt.start() if nxt else len(text)
+        block = text[head.end():end]
+        block = _PRIVACY_LINE.sub(line, block, count=1) if _PRIVACY_LINE.search(block) else line + "\n" + block
+        text = text[:head.end()] + block + text[end:]
+    _atomic_write_config(text)
+    return get_privacy()
 
 
 async def get_current_pins_priced() -> dict[str, dict]:

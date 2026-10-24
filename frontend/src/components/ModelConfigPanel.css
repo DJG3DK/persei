@@ -478,3 +478,17 @@
   font-size: 0.9rem;
   white-space: pre-wrap;
 }
+
+/* The router-wide privacy rule, above the role pins (2026-10-24). */
+.model-config-privacy {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  margin: 0 0 16px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface-sunken);
+}
+.model-config-privacy-label { font-weight: 600; font-size: 13px; }
+.model-config-privacy select { min-width: 0; max-width: 100%; }
+.model-config-privacy-note { flex-basis: 100%; font-size: 12px; color: var(--text-faint); }
+.model-config-privacy-msg { flex-basis: 100%; font-size: 12px; color: var(--text-dim); }
+.provider-picker-facts { display: block; font-size: 10.5px; color: var(--text-faint); margin-top: 2px; }
+.provider-picker-policy { text-decoration: underline; cursor: pointer; }
+.provider-picker-note { font-size: 11px; color: var(--text-faint); padding: 6px 10px; }

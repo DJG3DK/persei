@@ -116,6 +116,28 @@ async def get_model_endpoints(model: str, user: User = Depends(require_full_auth
         raise HTTPException(502, f"could not fetch providers for {model!r}: {e}")
 
 
+class SavePrivacyRequest(BaseModel):
+    mode: str
+
+
+@router.get("/privacy")
+def get_privacy(user: User = Depends(require_full_auth)):
+    """Which OpenRouter providers may serve the router's calls: "zdr" (keep
+    nothing), "deny" (no storing or training) or "off"."""
+    auth.require_admin(user)
+    return {"mode": model_config.get_privacy(), "modes": list(model_config.PRIVACY_MODES)}
+
+
+@router.post("/privacy")
+def save_privacy(req: SavePrivacyRequest, user: User = Depends(require_full_auth)):
+    """Writes router_settings.privacy; the router applies it on its next call."""
+    auth.require_admin(user)
+    try:
+        return {"ok": True, "mode": model_config.set_privacy(req.mode.strip().lower())}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.post("/providers")
 async def save_provider_pins(req: SaveProviderPinsRequest, user: User = Depends(require_full_auth)):
     """Pin (or clear) the OpenRouter provider per role. Same contract as the

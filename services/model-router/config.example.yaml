@@ -399,6 +399,11 @@ model_list:
       output_cost_per_token: 0.0000004
 
 router_settings:
+  # Which OpenRouter providers may serve a call: "zdr" (only hosts that keep
+  # nothing; the default), "deny" (only hosts that neither store nor train on
+  # it) or "off" (whatever your OpenRouter account allows). Also set from the
+  # dashboard's Models page; applied on the next call, no restart.
+  privacy: "zdr"
   # Tried in order when the pinned model refuses (a permanent failure, or a
   # transient one past the retry budget) -- see router/app.py. Each target
   # must itself be a model_name above, or it is dropped.

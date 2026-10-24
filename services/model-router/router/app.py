@@ -274,7 +274,9 @@ async def _buffered(client, table, alias, body, send, call_id, task_id, session_
             attempt_no += 1
             att = await send(client, OPENROUTER_KEY,
                              await supported.body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body, body),
-                             dep.model, fastest.extra_body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body),
+                             dep.model,
+                             upstream.with_privacy(fastest.extra_body_for(client, OPENROUTER_KEY, dep.model,
+                                                                          dep.extra_body), table.privacy),
                              dep.timeout_s)
             att.alias = name
             last = att
@@ -341,7 +343,8 @@ async def _streamed(client, table, alias, body, call_id, task_id, session_id, ca
             attempt_no += 1
             usage = upstream.Usage()
             t0 = time.monotonic()
-            extra = fastest.extra_body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body)
+            extra = upstream.with_privacy(fastest.extra_body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body),
+                                          table.privacy)
             trimmed = await supported.body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body, body)
             agen = upstream.stream_once(client, OPENROUTER_KEY, trimmed, dep.model,
                                         extra, dep.timeout_s, usage)
