@@ -462,6 +462,14 @@ _UNPARSEABLE = _ALWAYS + "unparseable"
 # Marks a path a `mv` lands on. Only a tracked FILE at that exact path is a
 # loss: `mv new.ts src/` into a tracked directory overwrites nothing.
 _OVERWRITE = "\x01"
+# Marks a named file put back to its committed version (`git checkout --
+# f`, `git restore f`, `git show HEAD:f > f`). With a repo root, one tracked
+# FILE does not ask: what goes is that file's uncommitted edit, which in a
+# task's own worktree is the agent's, and the committed content is the
+# result. A directory, a glob or `.` is wholesale and still asks; so does
+# anything without a repo to check against (2026-10-24: three asks on one
+# dependency task, each putting package.json back after an npm install).
+_REVERT = "\x05"
 
 # 2026-10-22 audit, A24: delete forms neither mode asked about. An inline
 # script (`python3 -c`, `node -e`, a heredoc fed to an interpreter) is not
@@ -848,6 +856,57 @@ def _has_short_flag(args: list[str], letter: str, long: str = "") -> bool:
                for a in args)
 
 
+def _git_reverted_files(tokens: list[str]) -> list[str]:
+    """The paths of `git checkout [HEAD] -- <paths>` or `git restore
+    [--source=HEAD] <paths>`, when that is all it does; else []. Forced,
+    from another revision, or with `.`/a glob/a directory slash: [] -- those
+    stay with _git_discards_edits and ask."""
+    sub, args = _git_subcommand(tokens)
+    if sub == "checkout" and "--" in args:
+        cut = args.index("--")
+        before, paths = args[:cut], args[cut + 1:]
+        if before not in ([], ["HEAD"]):
+            return []
+    elif sub == "restore":
+        paths, i = [], 0
+        while i < len(args):
+            a = args[i]
+            if a in ("-s", "--source"):
+                if i + 1 >= len(args) or args[i + 1] != "HEAD":
+                    return []
+                i += 2
+                continue
+            if a.startswith("--source=") and a != "--source=HEAD":
+                return []
+            if a in ("-W", "--worktree", "-q", "--quiet") or a.startswith("--source="):
+                i += 1
+                continue
+            if a.startswith("-") and a != "--":
+                return []                                     # --staged, --patch, ...: not this shape
+            if a != "--":
+                paths.append(a)
+            i += 1
+    else:
+        return []
+    if not paths or any(p in (".", "./") or p.endswith("/") or any(ch in p for ch in "*?[") for p in paths):
+        return []
+    return paths
+
+
+def _git_show_head_file(tokens: list[str]) -> str | None:
+    """`git show HEAD:<path>` -> <path> (repo-relative), else None."""
+    sub, args = _git_subcommand(tokens)
+    objs = []
+    for a in args:
+        if _WRITE_REDIRECT_RE.match(a):
+            break                                         # the redirect and its target are not objects
+        if not a.startswith("-"):
+            objs.append(a)
+    if sub != "show" or len(objs) != 1 or not objs[0].startswith("HEAD:"):
+        return None
+    return objs[0][len("HEAD:"):] or None
+
+
 def _git_discards_edits(tokens: list[str]) -> bool:
     """`git checkout -- .`, `git checkout -f`, `git restore` (but not a
     `--staged`-only unstage), `git switch -f` and `git stash drop|clear`:
@@ -980,6 +1039,11 @@ def _loss_targets(command: str, cwd: str = _SANDBOX_CWD, nesting: int = 0) -> li
     moved_unknown = False
     losses: list[str] = []
     written: set[str] = set()                                 # files a redirect wrote, to run later
+    # backup -> the file it was copied from, by this command: `cp f /tmp/b`
+    # ... `cp /tmp/b f` puts f's own bytes back, which loses nothing
+    # (2026-10-24: try-a-change-then-restore asked every time). Anything
+    # else that names the backup in between drops it, and the restore asks.
+    backups: dict[str, str] = {}
 
     def _record(targets: list[str], prefix: str = "") -> None:
         for t in targets:
@@ -1035,6 +1099,19 @@ def _loss_targets(command: str, cwd: str = _SANDBOX_CWD, nesting: int = 0) -> li
                 losses.append(_ALWAYS + tokens[1].strip())
             continue
         head = tokens[0].rsplit("/", 1)[-1]
+        if backups:
+            named = tokens[1:] + [t for t, _ in _redirect_targets(raw)]
+            if any(ch in t for t in named for ch in "$`") or (fallbacks and not guarded):
+                backups.clear()                               # cannot tell what this touches
+            else:
+                cp_paths = [t for t in tokens[1:] if not t.startswith("-")] if head == "cp" else []
+                restore = (len(cp_paths) == 2 and len(tokens) == 3
+                           and backups.get(_resolve(cp_paths[0], cwd)) == _resolve(cp_paths[1], cwd))
+                if restore:
+                    continue                                  # f's own bytes back from its backup
+                hit = {_resolve(t, cwd) for t in named if not t.startswith("-")}
+                for b in [b for b in backups if b in hit]:
+                    del backups[b]
         # A file this command wrote and now runs: what it does is the text
         # written into it, which was never read as a command (2026-10-23:
         # `echo 'rm -rf src' > run.sh && bash run.sh`). A heredoc written and
@@ -1047,11 +1124,14 @@ def _loss_targets(command: str, cwd: str = _SANDBOX_CWD, nesting: int = 0) -> li
         # `grep x f > f` all emptied tracked files unasked). A heredoc only
         # written out with a body is an edit, as in _strip_inert_heredocs.
         heredoc_write = head in _HEREDOC_TEXT_SINKS and _HEREDOC_OP_RE.search(_mask_quotes(raw)[1])
+        shown = _git_show_head_file(tokens) if head == "git" else None
         for target, truncates in _redirect_targets(raw):
             if not heredoc_write:
                 if not any(ch in target for ch in "$`"):
                     written.add(_resolve(target, cwd))
-                if truncates:
+                if truncates and shown and _resolve(target, cwd) == _resolve(shown, _SANDBOX_CWD):
+                    _record([target], prefix=_REVERT)         # the file's own committed text
+                elif truncates:
                     _record([target], prefix=_IF_TRACKED + _OVERWRITE)
         if head == "cd" and "|" in (sep, next_sep):
             continue                                          # a pipeline stage is a subshell: its cd is gone
@@ -1061,6 +1141,9 @@ def _loss_targets(command: str, cwd: str = _SANDBOX_CWD, nesting: int = 0) -> li
             # An unreadable destination leaves every relative path after it
             # unreadable too: `$` in the cwd makes _record ask about them.
             cwd = "/$" + dest if any(ch in dest for ch in "$`") else _resolve(dest, cwd)
+            # A cd to where the shell already is cannot leave it anywhere
+            # else, failed or not (`cd /workspace && ...; ...`, 2026-10-24).
+            fallbacks = [f for f in fallbacks if f != cwd]
             guarded = just_cd = True
             continue
         if head in ("exit", "return") and sep == "||" and was_cd:
@@ -1070,6 +1153,10 @@ def _loss_targets(command: str, cwd: str = _SANDBOX_CWD, nesting: int = 0) -> li
                 (t.startswith("-") and not t.startswith("--") and "f" in t) or t == "--force"
                 for t in tokens):
             losses.append(_ALWAYS + "git clean -f")           # removes untracked work wholesale
+            continue
+        reverted = _git_reverted_files(tokens) if head == "git" else []
+        if reverted:
+            _record(reverted, prefix=_REVERT)
             continue
         if head == "git" and _git_discards_edits(tokens):
             losses.append(_ALWAYS + " ".join(tokens))         # uncommitted edits, gone
@@ -1153,6 +1240,9 @@ def _loss_targets(command: str, cwd: str = _SANDBOX_CWD, nesting: int = 0) -> li
                 dest, sources = paths[-1], paths[:-1]
                 _record([dest, *(dest.rstrip("/") + "/" + s.rstrip("/").rsplit("/", 1)[-1] for s in sources)],
                         prefix=_IF_TRACKED + _OVERWRITE)
+                if (head == "cp" and len(tokens) == 3 and not dest.endswith("/")
+                        and not any(ch in t for t in paths for ch in "$`*?[") and (guarded or not fallbacks)):
+                    backups[_resolve(dest, cwd)] = _resolve(sources[0], cwd)
             continue
         if head == "tee":
             _record([t for t in tokens[1:] if not t.startswith("-")] if not _has_short_flag(tokens[1:], "a", "--append")
@@ -1170,6 +1260,20 @@ def _loss_targets(command: str, cwd: str = _SANDBOX_CWD, nesting: int = 0) -> li
                 continue
             _record(targets)
     return losses
+
+
+def _is_exactly_a_tracked_file(repo_root: str, target: str) -> bool:
+    """_is_tracked_file for the permissive direction: True only when git
+    says so. Unknown is False here, because True lets a revert through."""
+    rel = target[len(_SANDBOX_CWD) + 1:] if target.startswith(_SANDBOX_CWD + "/") else ""
+    if not rel:
+        return False
+    try:
+        r = subprocess.run(["git", "-C", repo_root, "ls-files", "--error-unmatch", "--", rel],
+                           capture_output=True, text=True, timeout=10)
+    except Exception:  # noqa: BLE001 -- unknown means ask
+        return False
+    return r.returncode == 0 and r.stdout.splitlines() == [rel]
 
 
 def _is_tracked_file(repo_root: str, target: str) -> bool:
@@ -1238,10 +1342,14 @@ def _bash_deletes_real_work(req, repo_root: str | None = None) -> bool:
         target = target[len(_IF_TRACKED):] if if_tracked else target
         overwrite = target.startswith(_OVERWRITE)
         target = target[len(_OVERWRITE):] if overwrite else target
+        revert = target.startswith(_REVERT)
+        target = target[len(_REVERT):] if revert else target
         if not (target == _SANDBOX_CWD or target.startswith(_SANDBOX_CWD + "/")):
             if if_tracked:
                 continue                                     # nothing outside is tracked here
             return True                                      # outside the worktree: always ask
+        if revert and _is_exactly_a_tracked_file(repo_root, target):
+            continue                                         # one file back to HEAD: see _REVERT
         if overwrite and not any(ch in target for ch in "*?["):
             if _is_tracked_file(repo_root, target):
                 return True                                  # a mv, cp or `>` onto tracked content

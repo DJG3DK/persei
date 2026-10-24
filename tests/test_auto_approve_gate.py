@@ -421,9 +421,11 @@ def test_heredocs_written_out_are_still_text():
 
 
 # 2026-10-22 audit, A24: each of these loses uncommitted work, and neither
-# mode asked.
+# mode asked. (`git checkout -- src/app.ts` was here too; since 2026-10-24
+# one named file put back to HEAD is the agent's own edit undone and passes
+# -- deep_agent._REVERT -- while every wholesale form below still asks.)
 DISCARDS_WORK = [
-    "git checkout -- .", "git checkout -- src/app.ts", "git checkout .", "git checkout -f HEAD",
+    "git checkout -- .", "git checkout .", "git checkout -f HEAD",
     "git -C /workspace checkout --force main", "git restore .", "git restore --staged --worktree src",
     "git switch -f main", "git switch --discard-changes main", "git stash -u && git stash drop",
     "git stash clear", 'python3 -c "import shutil; shutil.rmtree(\'src\')"',

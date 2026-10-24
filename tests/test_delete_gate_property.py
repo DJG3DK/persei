@@ -360,7 +360,10 @@ def _losses(before: dict, after: dict, repo: str, env: dict) -> list[str]:
     content replaced by new text is an edit. Lost: a tracked file gone with its
     content nowhere, emptied, overwritten with another file's content (a mv or
     cp onto it), or an uncommitted edit reverted to HEAD with no stash keeping
-    it."""
+    it -- unless that one file is all the command touched: putting a single
+    file back to its committed version is the agent undoing its own edit,
+    which the gate lets through (deep_agent._REVERT, 2026-10-24). Both edits
+    reverted (`.`, `src/`, a glob) is wholesale and still counts."""
     lost = []
     if not os.path.isdir(os.path.join(repo, ".git")):
         lost.append(".git is gone")
@@ -379,6 +382,8 @@ def _losses(before: dict, after: dict, repo: str, env: dict) -> list[str]:
             lost.append(f"{rel}: its uncommitted edit was reverted")
         elif any(new == text for other, text in before.items() if other != rel):
             lost.append(f"{rel} was overwritten by another file")
+    if len(lost) == 1 and lost[0].endswith("its uncommitted edit was reverted"):
+        return []
     return lost
 
 
@@ -439,7 +444,6 @@ FOUND = [
     "> *.md",
     "true &> src/util.py",
     "grep zzz README.md > README.md",
-    "git show HEAD:src/app.py > src/app.py",
     "sh -c \"printf '' > src/util.py\"",
     "echo README.md | xargs -n1 truncate -s0",
     "cp empty.txt README.md",
@@ -472,7 +476,7 @@ def test_the_harness_sees_a_loss_when_the_gate_is_bypassed(template, monkeypatch
     with pytest.raises(AssertionError, match="src/util.py is gone"):
         _run_case(template, "rm src/util.py")
     with pytest.raises(AssertionError, match="uncommitted edit was reverted"):
-        _run_case(template, "git checkout -- src/app.py")
+        _run_case(template, "git checkout -- .")
     with pytest.raises(AssertionError, match="README.md was emptied"):
         _run_case(template, "truncate -s 0 README.md")
 
@@ -480,6 +484,8 @@ def test_the_harness_sees_a_loss_when_the_gate_is_bypassed(template, monkeypatch
 @pytest.mark.parametrize("command", [
     "rm -f notes.txt", "rm -rf tmp", "echo hi >> README.md", "cat > new.txt <<'X'\nrm -rf src\nX",
     "git stash", "git reset --soft HEAD~1", "rm -rf src/scratch.log", "sed -i s/v2/v3/ README.md",
+    # one named file put back to HEAD: the agent undoing its own edit
+    "git checkout -- src/app.py", "git restore src/app.py", "git show HEAD:src/app.py > src/app.py",
 ])
 def test_ordinary_work_is_not_a_loss(template, command, monkeypatch):
     """...and it does not cry wolf: these keep every tracked byte (a stash
@@ -487,3 +493,60 @@ def test_ordinary_work_is_not_a_loss(template, command, monkeypatch):
     import agent.deep_agent as deep_agent
     monkeypatch.setattr(deep_agent, "_bash_deletes_real_work", lambda req, repo_root=None: False)
     _run_case(template, command)
+
+
+@pytest.mark.parametrize("command", [
+    "git checkout -- src/app.py", "git checkout HEAD -- src/app.py", "git restore src/app.py",
+    "git restore --source=HEAD src/app.py", "git show HEAD:src/app.py > src/app.py",
+    "cd src && git checkout -- app.py",
+])
+def test_one_named_file_back_to_head_does_not_ask(template, command):
+    """2026-10-24: the agent putting package.json back after an npm install
+    asked three times on one task. One tracked file, back to its committed
+    text, is its own edit undone."""
+    from agent.deep_agent import interrupt_on_for
+    from types import SimpleNamespace
+    when = interrupt_on_for(True, template.repo)["bash"]["when"]
+    assert not when(SimpleNamespace(tool_call={"name": "bash", "args": {"command": command}}))
+
+
+@pytest.mark.parametrize("command", [
+    "git checkout -- .", "git checkout -- src/", "git checkout -- 'src/*.py'", "git checkout -f -- src/app.py",
+    "git checkout HEAD~1 -- src/app.py", "git restore .", "git restore --source=HEAD~1 src/app.py",
+    "git show HEAD:README.md > src/app.py", "git show HEAD~1:src/app.py > src/app.py",
+])
+def test_wholesale_or_other_reverts_still_ask(template, command):
+    from agent.deep_agent import interrupt_on_for
+    from types import SimpleNamespace
+    when = interrupt_on_for(True, template.repo)["bash"]["when"]
+    assert when(SimpleNamespace(tool_call={"name": "bash", "args": {"command": command}}))
+
+
+@pytest.mark.parametrize("command", [
+    "cp README.md tmp/b && sed -i s/v2/v9/ README.md && cp tmp/b README.md",
+    "cd src && cp app.py lib/app.bak && sed -i s/v2/v9/ app.py && cp lib/app.bak app.py",
+    "cd . && cp src/app.py tmp/b; cp tmp/b src/app.py",
+])
+def test_a_file_put_back_from_its_own_backup_does_not_ask(template, command):
+    """2026-10-24: try a change, then restore the file from a backup made
+    earlier in the same command -- the agent's mutation checks asked each
+    time. The restore is the file's own bytes; the run must lose nothing."""
+    from agent.deep_agent import interrupt_on_for
+    from types import SimpleNamespace
+    when = interrupt_on_for(True, template.repo)["bash"]["when"]
+    assert not when(SimpleNamespace(tool_call={"name": "bash", "args": {"command": command}}))
+    _run_case(template, command)
+
+
+@pytest.mark.parametrize("command", [
+    "cp README.md tmp/b && echo x > tmp/b && cp tmp/b README.md",
+    "cp README.md tmp/b && cp src/util.py tmp/b && cp tmp/b README.md",
+    "cp src/util.py tmp/b && cp tmp/b README.md",
+    "B=tmp/b; cp README.md $B && cp $B README.md && cp src/util.py tmp/b && cp tmp/b README.md",
+])
+def test_a_backup_touched_in_between_or_from_another_file_still_asks(template, command):
+    _run_case(template, command)
+    from agent.deep_agent import interrupt_on_for
+    from types import SimpleNamespace
+    when = interrupt_on_for(True, template.repo)["bash"]["when"]
+    assert when(SimpleNamespace(tool_call={"name": "bash", "args": {"command": command}}))
