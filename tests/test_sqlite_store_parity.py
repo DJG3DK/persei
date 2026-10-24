@@ -290,12 +290,16 @@ async def test_recent_items_recovers_the_ordering_only_down_to_one_second(store,
 
     newest_two = [item.key for item in await store_paging.recent_items(store, ns, 2)]
     if backend == "sqlite":
-        stamps = {(await store.aget(ns, f"t{i:03d}")).updated_at for i in range(6)}
-        if len(stamps) == 1:
+        written = {f"t{i:03d}": (await store.aget(ns, f"t{i:03d}")).updated_at for i in range(6)}
+        if len(set(written.values())) == 1:
             assert newest_two == ["t000", "t001"], \
                 "one second of writes: the pager cannot tell them apart and keeps store order"
         else:
-            assert newest_two[0] in {"t005", "t004"}
+            # The newest second's rows come first, in store (insertion) order
+            # within it: when the writes straddle a boundary early, that is
+            # t001, not t004 (a CI flake, 2026-10-24).
+            last = max(written.values())
+            assert newest_two[0] == min(k for k, t in written.items() if t == last)
     else:
         assert newest_two == ["t005", "t004"]
 
