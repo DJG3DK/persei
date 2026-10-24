@@ -42,7 +42,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from router import ledger, upstream
 from router import stats as stats_mod
 from router.config import Registry
-from router.fastest import FastestProviders
+from router.fastest import FastestProviders, SupportedParams
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("model-router")
@@ -102,6 +102,7 @@ BACKOFF_S = float(os.environ.get("MODEL_ROUTER_BACKOFF_S", "0.6"))
 
 registry = Registry()
 fastest = FastestProviders()
+supported = SupportedParams()
 
 
 @asynccontextmanager
@@ -271,8 +272,9 @@ async def _buffered(client, table, alias, body, send, call_id, task_id, session_
         dep = table.deployments[name]
         for retry in range(RETRIES_PER_DEPLOYMENT + 1):
             attempt_no += 1
-            att = await send(client, OPENROUTER_KEY, body, dep.model,
-                             fastest.extra_body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body),
+            att = await send(client, OPENROUTER_KEY,
+                             await supported.body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body, body),
+                             dep.model, fastest.extra_body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body),
                              dep.timeout_s)
             att.alias = name
             last = att
@@ -340,7 +342,8 @@ async def _streamed(client, table, alias, body, call_id, task_id, session_id, ca
             usage = upstream.Usage()
             t0 = time.monotonic()
             extra = fastest.extra_body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body)
-            agen = upstream.stream_once(client, OPENROUTER_KEY, body, dep.model,
+            trimmed = await supported.body_for(client, OPENROUTER_KEY, dep.model, dep.extra_body, body)
+            agen = upstream.stream_once(client, OPENROUTER_KEY, trimmed, dep.model,
                                         extra, dep.timeout_s, usage)
             try:
                 first = await agen.__anext__()

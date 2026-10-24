@@ -182,3 +182,100 @@ class FastestProviders:
 
     def snapshot(self) -> dict[str, list[str]]:
         return {m + (f" (ignore {', '.join(i)})" if i else ""): o for (m, i), o in self._order.items()}
+
+
+# -- settings a model's providers do not take (2026-10-24) -------------------
+#
+# Kimi K3.1 Pro has one provider, and it takes neither temperature, top_p nor
+# parallel_tool_calls. With `require_parameters` (set on every agent role, so
+# a provider that would silently ignore `tools` is never picked) OpenRouter
+# answered every agent call 404 "No endpoints found that can handle the
+# requested parameters", and the role ran on its fallback all along.
+#
+# Only sampling knobs are dropped: they change how an answer is worded, not
+# what the call means. tools, tool_choice and response_format never are -- a
+# model that cannot take those should still fail and fall back, as before.
+DROPPABLE = frozenset({
+    "temperature", "top_p", "top_k", "min_p", "top_a", "frequency_penalty", "presence_penalty",
+    "repetition_penalty", "seed", "logit_bias", "logprobs", "top_logprobs", "parallel_tool_calls",
+})
+FIRST_FETCH_TIMEOUT_S = 8.0
+
+
+def supported_union(endpoints: list[dict], ignore: list[str] | None = None) -> set[str]:
+    """What at least one usable provider takes: OpenRouter can route to that one."""
+    ignored = {s.lower() for s in (ignore or [])}
+    out: set[str] = set()
+    for e in endpoints:
+        tag = (e.get("tag") or "").lower()
+        if tag.split("/")[0] in ignored or (e.get("provider_name") or "").lower() in ignored or tag in ignored:
+            continue
+        if (e.get("status") or 0) < 0:
+            continue
+        out.update(e.get("supported_parameters") or [])
+    return out
+
+
+def trim(body: dict, supported: set[str] | None) -> tuple[dict, list[str]]:
+    """The body without the droppable settings no provider takes, and their
+    names. `max_completion_tokens` becomes `max_tokens` where only that is
+    taken. Unknown support (None) changes nothing."""
+    if not supported:
+        return body, []
+    dropped = [k for k in body if k in DROPPABLE and k not in supported]
+    out = {k: v for k, v in body.items() if k not in dropped}
+    if "max_completion_tokens" in out and "max_completion_tokens" not in supported \
+            and "max_tokens" in supported and "max_tokens" not in out:
+        out["max_tokens"] = out.pop("max_completion_tokens")
+        dropped.append("max_completion_tokens (sent as max_tokens)")
+    return out, dropped
+
+
+class SupportedParams:
+    """Per model (and ignore list): the settings its providers take. The first
+    call for a model waits for one fetch, briefly; later ones refresh in the
+    background. A failed fetch means "unknown", and nothing is dropped."""
+
+    def __init__(self) -> None:
+        self._known: dict[tuple, set[str]] = {}
+        self._fetched: dict[tuple, float] = {}
+        self._refreshing: set[tuple] = set()
+        self._tasks: set[asyncio.Task] = set()
+        self._logged: set[tuple] = set()
+
+    async def body_for(self, client: httpx.AsyncClient | None, api_key: str, model: str,
+                       extra_body: dict, body: dict) -> dict:
+        if client is None or "messages" not in body:
+            return body                               # embeddings, and tests without a client
+        provider = extra_body.get("provider") if isinstance(extra_body.get("provider"), dict) else {}
+        key = (model, tuple(sorted(provider.get("ignore") or [])))
+        if key not in self._fetched:
+            try:
+                await asyncio.wait_for(self._refresh(client, api_key, key), FIRST_FETCH_TIMEOUT_S)
+            except Exception:  # noqa: BLE001 -- a timeout or a failed fetch: unknown, send as is
+                self._fetched.setdefault(key, time.monotonic())
+        elif time.monotonic() - self._fetched[key] > REFRESH_S and key not in self._refreshing:
+            self._refreshing.add(key)
+            task = asyncio.get_running_loop().create_task(self._refresh(client, api_key, key))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+        out, dropped = trim(body, self._known.get(key))
+        if dropped and (key, tuple(dropped)) not in self._logged:
+            self._logged.add((key, tuple(dropped)))
+            logger.info("%s: no provider takes %s; dropped from its calls", model, ", ".join(dropped))
+        return out
+
+    async def _refresh(self, client: httpx.AsyncClient, api_key: str, key: tuple) -> None:
+        model, ignore = key
+        try:
+            r = await client.get(ENDPOINTS_URL.format(model=model),
+                                 headers={"Authorization": f"Bearer {api_key}"}, timeout=FIRST_FETCH_TIMEOUT_S)
+            r.raise_for_status()
+            found = supported_union((r.json().get("data") or {}).get("endpoints") or [], list(ignore))
+            if found:
+                self._known[key] = found
+        except Exception as e:  # noqa: BLE001 -- unknown means send as configured
+            logger.warning("supported parameters for %s not refreshed: %s", model, e)
+        finally:
+            self._fetched[key] = time.monotonic()
+            self._refreshing.discard(key)
