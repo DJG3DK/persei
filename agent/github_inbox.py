@@ -106,6 +106,18 @@ class GitHubClient:
     async def reviews(self, slug: str, number: int) -> list[dict[str, Any]]:
         return await self.get(f"/repos/{slug}/pulls/{number}/reviews", {"per_page": 50})
 
+    async def file_text(self, slug: str, path: str, ref: str) -> str:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            r = await client.get(f"{API}/repos/{slug}/contents/{path}", params={"ref": ref},
+                                 headers={**self._headers, "Accept": "application/vnd.github.raw+json"})
+        if r.status_code == 404:
+            raise LookupError(f"GitHub 404 for {path}@{ref}")
+        r.raise_for_status()
+        return r.text
+
+    async def branch_sha(self, slug: str, branch: str) -> str:
+        return (await self.get(f"/repos/{slug}/commits/{branch}")).get("sha") or ""
+
     async def dependabot_alerts(self, slug: str) -> list[dict[str, Any]]:
         return await self.get(f"/repos/{slug}/dependabot/alerts", {"state": "open", "per_page": 50})
 
@@ -320,6 +332,112 @@ def _version_key(v: str) -> tuple[int, Any]:
         return (0, Version(v))
     except Exception:  # noqa: BLE001 -- a version nobody can parse sorts last, as text
         return (1, v)
+
+
+def alert_targets(alerts: list[dict[str, Any]]) -> dict[str, tuple[str, str, str]]:
+    """item key -> (package, manifest, the version that fixes every open
+    alert on it), for the security_alerts items security_alert_items builds."""
+    out: dict[str, tuple[str, str, str]] = {}
+    for item in security_alert_items(alerts, "", ""):
+        pkg, manifest = "", ""
+        patched: list[str] = []
+        for a in alerts:
+            if a.get("state") not in (None, "open"):
+                continue
+            dep = a.get("dependency") or _NOTHING
+            name = (dep.get("package") or _NOTHING).get("name") or "?"
+            path = dep.get("manifest_path") or "?"
+            if "alerts:" + re.sub(r"[^A-Za-z0-9._@-]", "-", f"{name}@{path}".replace("/", ".")) != item.key:
+                continue
+            pkg, manifest = name, path
+            fix = str(((a.get("security_vulnerability") or _NOTHING).get("first_patched_version") or _NOTHING)
+                      .get("identifier") or "")
+            if not fix:
+                break                                         # an alert with no fix yet: no target
+            patched.append(fix)
+        else:
+            if pkg and patched:
+                out[item.key] = (pkg, manifest, max(patched, key=_version_key))
+    return out
+
+
+def installed_versions(manifest: str, text: str, pkg: str) -> list[str] | None:
+    """Every version of `pkg` this lockfile installs, or None for a file this
+    does not read (then nothing is decided from it)."""
+    name = manifest.rsplit("/", 1)[-1]
+    if name in ("package-lock.json", "npm-shrinkwrap.json"):
+        data: dict[str, Any] = json.loads(text)
+        packages: dict[str, dict[str, Any]] = data.get("packages") or {}
+        found: list[str] = [str(v.get("version") or "") for k, v in packages.items()
+                            if k == f"node_modules/{pkg}" or k.endswith(f"/node_modules/{pkg}")]
+
+        def walk(deps: dict[str, dict[str, Any]]) -> None:   # lockfile v1
+            for k, v in deps.items():
+                if k == pkg:
+                    found.append(str(v.get("version") or ""))
+                walk(v.get("dependencies") or {})
+        if not packages:
+            walk(data.get("dependencies") or {})
+        return [v for v in found if v]
+    if name in ("poetry.lock", "uv.lock", "Cargo.lock"):
+        import tomllib  # noqa: PLC0415
+        norm = re.sub(r"[-_.]+", "-", pkg).lower()
+        rows: list[dict[str, Any]] = tomllib.loads(text).get("package") or []
+        return [str(p["version"]) for p in rows
+                if re.sub(r"[-_.]+", "-", str(p.get("name", ""))).lower() == norm and p.get("version")]
+    if name.startswith("requirements") and name.endswith(".txt"):
+        norm = re.sub(r"[-_.]+", "-", pkg).lower()
+        out: list[str] = []
+        for line in text.splitlines():
+            m = re.match(r"\s*([A-Za-z0-9._-]+)(?:\[[^\]]*\])?\s*==\s*([^\s;#]+)", line)
+            if m and re.sub(r"[-_.]+", "-", m.group(1)).lower() == norm:
+                out.append(m.group(2))
+        return out
+    return None
+
+
+# (slug, branch sha, manifest, package) -> the verdict, so an unchanged
+# branch costs one sha lookup per poll, not a lockfile download.
+_PATCHED_CACHE: dict[tuple[str, str, str, str], str | None] = {}
+
+
+async def patched_on_branch(client: GitHubClient, slug: str, branch: str,
+                            targets: dict[str, tuple[str, str, str]]) -> dict[str, str]:
+    """item key -> a note, for alerts whose fix is already on `branch`: every
+    copy of the package in the lockfile at or above the patched version.
+
+    2026-10-24: an override took dompurify to 3.4.17 under a dependency that
+    still declares 3.4.15. GitHub kept the alerts open on that declaration,
+    the inbox re-proposed them as "still open after the fix", and the task
+    it started spent $1.90 proving the lockfile right. An alert the branch
+    already fixes is GitHub's to close; the item waits for that instead."""
+    if not targets:
+        return {}
+    sha = await client.branch_sha(slug, branch)
+    texts: dict[str, str | None] = {}
+    out: dict[str, str] = {}
+    for key, (pkg, manifest, target) in targets.items():
+        ck = (slug, sha, manifest, pkg)
+        if ck not in _PATCHED_CACHE:
+            if manifest not in texts:
+                try:
+                    texts[manifest] = await client.file_text(slug, manifest, sha)
+                except Exception as e:  # noqa: BLE001 -- unreadable means no verdict: as before
+                    logger.warning("github inbox: %s %s unreadable at %s: %s", slug, manifest, sha[:8], e)
+                    texts[manifest] = None
+            text, note = texts[manifest], None
+            if text is not None:
+                try:
+                    versions = installed_versions(manifest, text, pkg)
+                except Exception as e:  # noqa: BLE001 -- a file that will not parse decides nothing
+                    logger.warning("github inbox: %s %s did not parse: %s", slug, manifest, e)
+                    versions = None
+                if versions and all(_version_key(v) >= _version_key(target) for v in versions):
+                    note = f"{pkg} {', '.join(sorted(set(versions), key=_version_key))} on {branch}, fixed in {target}"
+            _PATCHED_CACHE[ck] = note
+        if _PATCHED_CACHE[ck]:
+            out[key] = _PATCHED_CACHE[ck] or ""
+    return out
 
 
 def security_alert_items(alerts: list[dict[str, Any]], repo: str, slug: str) -> list[Item]:
@@ -538,7 +656,8 @@ def _review_id(fingerprint: str | None) -> str:
 def decide(existing: dict[str, dict[str, Any]], found: list[Item], proj: dict[str, Any], open_auto: int,
            now: float | None = None, has_checks: bool | None = True,
            live_tasks: set[str] | None = None, finished_tasks: dict[str, float] | None = None,
-           scanned_at: float | None = None) -> tuple[list[Decision], list[str]]:
+           scanned_at: float | None = None,
+           patched: dict[str, str] | None = None) -> tuple[list[Decision], list[str]]:
     """Compare what was found with what the store holds.
 
     Returns the decisions for items that are new or changed, and the keys of
@@ -639,6 +758,22 @@ def decide(existing: dict[str, dict[str, Any]], found: list[Item], proj: dict[st
         item.mode = mode
         if prev:
             item.attempts = list(prev.get("attempts") or [])
+        # The default branch already has the fix (patched_on_branch): GitHub
+        # has not re-scanned yet, or is reading a declaration rather than what
+        # is installed. Nothing for a task to do; wait for GitHub to close it.
+        # A task already working on it is left alone.
+        if (patched and item.key in patched and mode != "off"
+                and not (prev and prev.get("state") == "task_created" and _still_being_worked(prev))):
+            why = f"already fixed on the default branch ({patched[item.key]}); waiting for GitHub to close it"
+            item.state = "awaiting_rescan"
+            if prev:
+                item.created_at = prev.get("created_at", now)
+                item.task_id = prev.get("task_id")
+            if prev and prev.get("state") == "awaiting_rescan" and prev.get("reason") == why:
+                continue
+            decisions.append(Decision(item, "none", why))
+            continue
+        if prev:
             after = _after_finished_task(item, prev) if mode != "off" else None
             if after is not None:
                 if after.action != "skip":
@@ -1182,8 +1317,17 @@ async def poll_project(
             scanned_at = await client.last_scan_at(slug)
         except Exception as e:  # noqa: BLE001 -- unknown means "keep waiting", never "settled"
             logger.warning("github inbox: %s last scan time unavailable: %s", repo, e)
+    patched: dict[str, str] = {}
+    if any(i.kind == "security_alerts" for i in found):
+        try:
+            info = await client.repo(slug)
+            patched = await patched_on_branch(client, slug, info.get("default_branch") or "main",
+                                              alert_targets(await client.dependabot_alerts(slug)))
+        except Exception as e:  # noqa: BLE001 -- no verdict: every alert is decided as before
+            logger.warning("github inbox: %s could not check the default branch for fixes: %s", repo, e)
     decisions, gone = decide(existing, found, proj, open_auto, has_checks=has_checks,
-                             live_tasks=in_flight, finished_tasks=done, scanned_at=scanned_at)
+                             live_tasks=in_flight, finished_tasks=done, scanned_at=scanned_at,
+                             patched=patched)
     summary: dict[str, Any] = {"repo": repo, "found": len(found), "proposed": 0, "created": 0, "resolved": 0}
     for d in decisions:
         async with item_lock(repo, d.item.key):

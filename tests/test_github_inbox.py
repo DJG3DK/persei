@@ -1,5 +1,6 @@
 """The GitHub inbox: discovery from a fake API, policy decisions, approve
 links, and a full poll pass against a fake store."""
+import json
 import base64
 import secrets
 import time
@@ -1140,3 +1141,89 @@ async def test_an_outsiders_pull_request_is_not_a_review_item():
     keys = {i.key for i in await gi.discover(gh, "proj", "o/proj",
                                              _proj(review_requests="propose") | {"authors": "anyone"})}
     assert keys == {"review:1", "review:2", "review:3", "review:4"}, "the operator can widen it"
+
+
+# -- an alert the default branch already fixes (2026-10-24) -------------------
+
+def _open_alert(n, pkg="dompurify", manifest="frontend/package-lock.json", fix="3.4.17", state="open"):
+    return {"number": n, "state": state, "dependency": {"package": {"name": pkg}, "manifest_path": manifest},
+            "security_advisory": {"severity": "high", "summary": "s", "ghsa_id": f"G{n}"},
+            "security_vulnerability": {"vulnerable_version_range": "< " + (fix or "9"),
+                                       "first_patched_version": {"identifier": fix} if fix else None}}
+
+
+def test_alert_targets_take_the_highest_fix_per_package_and_skip_unfixable_groups():
+    t = gi.alert_targets([_open_alert(1, fix="3.4.16"), _open_alert(2, fix="3.4.17"),
+                          _open_alert(3, pkg="zod", manifest="package-lock.json", fix=None)])
+    assert t == {"alerts:dompurify@frontend.package-lock.json": ("dompurify", "frontend/package-lock.json", "3.4.17")}
+
+
+def test_installed_versions_reads_every_copy_in_the_common_lockfiles():
+    v3 = json.dumps({"packages": {"": {}, "node_modules/dompurify": {"version": "3.4.17"},
+                                  "node_modules/x/node_modules/dompurify": {"version": "3.4.15"},
+                                  "node_modules/dompurify-extra": {"version": "1.0.0"}}})
+    assert sorted(gi.installed_versions("frontend/package-lock.json", v3, "dompurify")) == ["3.4.15", "3.4.17"]
+    v1 = json.dumps({"dependencies": {"a": {"version": "1", "dependencies": {"dompurify": {"version": "2.0.0"}}}}})
+    assert gi.installed_versions("package-lock.json", v1, "dompurify") == ["2.0.0"]
+    poetry = '[[package]]\nname = "Jinja2"\nversion = "3.1.6"\n\n[[package]]\nname = "other"\nversion = "1"\n'
+    assert gi.installed_versions("poetry.lock", poetry, "jinja2") == ["3.1.6"]
+    assert gi.installed_versions("requirements.txt", "requests[socks]==2.32.4  # pinned\nurllib3==2.5\n",
+                                 "requests") == ["2.32.4"]
+    assert gi.installed_versions("yarn.lock", "whatever", "dompurify") is None
+
+
+class _Repo:
+    def __init__(self, files):
+        self.files, self.reads = files, 0
+
+    async def branch_sha(self, slug, branch):
+        return "abc123"
+
+    async def file_text(self, slug, path, ref):
+        self.reads += 1
+        if path not in self.files:
+            raise LookupError(path)
+        return self.files[path]
+
+
+@pytest.mark.asyncio
+async def test_patched_on_branch_needs_every_copy_at_the_fix_and_reads_each_lockfile_once(monkeypatch):
+    monkeypatch.setattr(gi, "_PATCHED_CACHE", {})
+    lock = json.dumps({"packages": {"node_modules/dompurify": {"version": "3.4.17"},
+                                    "node_modules/zod": {"version": "4.6.0"},
+                                    "node_modules/m/node_modules/zod": {"version": "4.6.6"}}})
+    repo = _Repo({"package-lock.json": lock})
+    targets = {"a": ("dompurify", "package-lock.json", "3.4.17"), "b": ("zod", "package-lock.json", "4.6.6"),
+               "c": ("undici", "missing/package-lock.json", "8.12.2"), "d": ("nope", "package-lock.json", "1.0")}
+    got = await gi.patched_on_branch(repo, "o/r", "main", targets)
+    # zod has one copy below the fix; undici's lockfile is unreadable; nope is not installed at all.
+    assert got == {"a": "dompurify 3.4.17 on main, fixed in 3.4.17"}
+    assert repo.reads == 2
+    await gi.patched_on_branch(repo, "o/r", "main", targets)
+    assert repo.reads == 2, "an unchanged branch is answered from the cache"
+
+
+def test_an_alert_already_fixed_on_main_waits_for_github_instead_of_a_task():
+    proj = _proj(security_alerts="auto")
+    key = "alerts:dompurify@frontend.package-lock.json"
+    note = {key: "dompurify 3.4.17 on main, fixed in 3.4.17"}
+    # New: no task, a reason that says why.
+    decisions, _ = gi.decide({}, [_item(key, "security_alerts")], proj, open_auto=0, patched=note)
+    assert [(d.action, d.item.state) for d in decisions] == [("none", "awaiting_rescan")]
+    assert "already fixed on the default branch" in decisions[0].reason
+    # The case that cost $1.90: a finished task's item past the settle wait
+    # used to be re-proposed as "still open after the fix".
+    prev = {**_created(key), "kind": "security_alerts"}
+    decisions, _ = gi.decide({key: prev}, [_item(key, "security_alerts")], proj, open_auto=0,
+                             live_tasks=set(), finished_tasks={"t1": 1.0}, now=10 ** 9, patched=note)
+    assert [(d.action, d.item.state) for d in decisions] == [("none", "awaiting_rescan")]
+    # Unchanged since: nothing new to write.
+    waiting = {"key": key, "fingerprint": "a", "state": "awaiting_rescan", "reason": decisions[0].reason}
+    assert gi.decide({key: waiting}, [_item(key, "security_alerts")], proj, open_auto=0,
+                     patched=note)[0] == []
+    # A task still working on it is left alone.
+    assert gi.decide({key: _created(key)}, [_item(key, "security_alerts")], proj, open_auto=0,
+                     live_tasks={"t1"}, patched=note)[0] == []
+    # Without a verdict, everything is as before.
+    decisions, _ = gi.decide({}, [_item(key, "security_alerts")], proj, open_auto=0)
+    assert decisions and decisions[0].action in ("create", "propose")
